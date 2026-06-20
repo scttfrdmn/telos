@@ -1,0 +1,23 @@
+# Compiled binaries — never commit build artifacts (see scttfrdmn/agenkit#660:
+# committed binaries pushed that module's zip over Go's 500 MB ceiling and broke
+# `go get`. Do not repeat that mistake here). Patterns are anchored so they hit
+# only build outputs, never the host/ source package or cmd/telosd/ source dir.
+/bin/
+/dist/
+/telosd
+*.exe
+*.test
+*.out
+
+# Go
+*.o
+*.a
+vendor/
+coverage.txt
+coverage.html
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp

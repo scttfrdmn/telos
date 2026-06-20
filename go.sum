@@ -1,0 +1,4 @@
+github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
+github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
+github.com/scttfrdmn/agenkit-go v0.85.0 h1:8h6XmeumKPb4MYEZ7sT44p+FpqdEAV3NgAM5MD1wElg=
+github.com/scttfrdmn/agenkit-go v0.85.0/go.mod h1:1NGwzMCelNvHxlpPjXtfxeGUVkC2fyylST5vDavjopw=
