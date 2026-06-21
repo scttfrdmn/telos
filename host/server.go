@@ -22,6 +22,7 @@ import (
 
 	"github.com/scttfrdmn/agenkit-go/agenkit"
 	"github.com/scttfrdmn/telos/acs"
+	"github.com/scttfrdmn/telos/governor"
 )
 
 // Server answers the AgentCore contract for a single seed Spec.
@@ -80,6 +81,23 @@ type InvocationRequest struct {
 	Prompt string `json:"prompt"`
 	// Input optionally overrides the message handed to the root agent.
 	Input string `json:"input,omitempty"`
+	// Budget is the explicit budget envelope a PARENT sends when this host is
+	// reached as a remote A2A session (§9): the reservation that bounds this
+	// session's spend, plus the deadline/cancel that cross the boundary. Zero on a
+	// top-level (non-A2A) invocation. The wire shape mirrors a2a.Budget so the
+	// contract is self-describing without host importing a2a.
+	Budget *WireBudget `json:"budget,omitempty"`
+}
+
+// WireBudget is the on-the-wire budget envelope (mirrors a2a.Budget). A remote
+// session is bounded by Amount over Period (a grant rate, never a bare total —
+// invariant 4); the deadline/cancel ride the HTTP request context.
+type WireBudget struct {
+	GrantID     string        `json:"grant_id,omitempty"`
+	Amount      float64       `json:"reservation_amount,omitempty"`
+	Period      time.Duration `json:"reservation_period,omitempty"`
+	Currency    string        `json:"currency,omitempty"`
+	CancelToken string        `json:"cancel_token,omitempty"`
 }
 
 // InvocationResponse is the POST /invocations result.
@@ -98,9 +116,25 @@ type InvocationResponse struct {
 	// Basis is "contested".
 	Accepted bool   `json:"accepted"`
 	Basis    string `json:"basis,omitempty"`
+	// Settlement is what this session returns to a PARENT's ledger when reached as
+	// a remote A2A session (§9): cost_settled (+ its modeled portion), the outcome,
+	// and acceptance. The parent settles this against the grant it reserved for
+	// this child. Present whenever the request carried a Budget.
+	Settlement *WireSettlement `json:"settlement,omitempty"`
 	// Metadata carries the root message's metadata (scoping, for/against record,
 	// metering — the auditable §14 surface).
 	Metadata map[string]any `json:"metadata,omitempty"`
+}
+
+// WireSettlement is the on-the-wire settlement (mirrors a2a.Settlement). The
+// metered vs synthesized split is preserved across the boundary (issue #23) so
+// the parent ledger never blends a measured and a modeled quantity.
+type WireSettlement struct {
+	CostSettled     float64 `json:"cost_settled"`
+	CostSynthesized float64 `json:"cost_synthesized"`
+	Currency        string  `json:"currency,omitempty"`
+	Outcome         string  `json:"outcome"`
+	Accepted        bool    `json:"accepted"`
 }
 
 func (s *Server) handleInvocations(w http.ResponseWriter, r *http.Request) {
@@ -139,14 +173,47 @@ func (s *Server) handleInvocations(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := InvocationResponse{
-		Output:    out.ContentString(),
-		Graph:     summarize(s.seed),
-		Archetype: metaString(out, "telos.archetype"),
-		Accepted:  metaBool(out, "telos.accepted"),
-		Basis:     metaString(out, "telos.basis"),
-		Metadata:  out.Metadata,
+		Output:     out.ContentString(),
+		Graph:      summarize(s.seed),
+		Archetype:  metaString(out, "telos.archetype"),
+		Accepted:   metaBool(out, "telos.accepted"),
+		Settlement: s.settlementFor(req, out),
+		Basis:      metaString(out, "telos.basis"),
+		Metadata:   out.Metadata,
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// settlementFor builds the wire settlement a remote session returns to its
+// parent (§9). It is present only when the request carried a budget envelope
+// (i.e. this host was reached as a remote A2A child). The cost is what this
+// session's governor actually spent (metered + synthesized portions kept
+// distinct — issue #23); the outcome/acceptance come from the run's verdict.
+func (s *Server) settlementFor(req InvocationRequest, out *agenkit.Message) *WireSettlement {
+	if req.Budget == nil {
+		return nil // top-level invocation, not a remote child — no settlement
+	}
+	cur := req.Budget.Currency
+	if cur == "" {
+		cur = "USD"
+	}
+	var total, synth float64
+	if s.deps != nil && s.deps.Governor != nil {
+		if mem, ok := s.deps.Governor.(*governor.Mem); ok {
+			total, synth = mem.Spent(governor.RootGrant)
+		}
+	}
+	outcome := "done"
+	if b, _ := out.Metadata["telos.contested"].(bool); b {
+		outcome = "done" // contested is an accepted completion, not a negative exit
+	}
+	return &WireSettlement{
+		CostSettled:     total,
+		CostSynthesized: synth,
+		Currency:        cur,
+		Outcome:         outcome,
+		Accepted:        metaBool(out, "telos.accepted"),
+	}
 }
 
 // ListenAndServe runs the host on addr (e.g. "0.0.0.0:8080") with sane timeouts

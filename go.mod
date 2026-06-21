@@ -2,7 +2,10 @@ module github.com/scttfrdmn/telos
 
 go 1.26
 
-require github.com/scttfrdmn/agenkit-go v0.86.0
+require (
+	github.com/scttfrdmn/agenkit-go v0.86.0
+	github.com/spore-host/cohort v0.2.0
+)
 
 require (
 	cloud.google.com/go v0.116.0 // indirect

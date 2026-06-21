@@ -1,82 +1,167 @@
 // Copyright 2026 Telos Authors. Licensed under the Apache License, Version 2.0.
 
-// Package inproc is the goroutine substrate adapter: the default transport rung
-// (architecture §7). Same trust + budget tree, I/O-bound fan-out, near-zero
-// marginal cost. In M0 it is where every node runs.
+// Package inproc fills cohort's PROVIDER seam for the goroutine rung — the
+// default transport (architecture §7): same trust + budget tree, I/O-bound
+// fan-out, near-zero marginal cost.
 //
-// The architecture's Substrate interface embeds cohort.Actuator and
-// cohort.Observer (§5). The cohort module (spore-host/cohort) is NOT yet
-// published, so this package defines a MINIMAL LOCAL placeholder for the
-// Actuator/Observer shape — just enough for an in-process supervisor — to be
-// swapped for the real cohort interfaces when they land. The placeholder is
-// deliberately small and clearly marked so the swap is mechanical.
+// It implements cohort.Actuator / cohort.Observer / cohort.Classifier for
+// in-process placement. "Placing" a node on this substrate means reserving a
+// goroutine slot in the same envelope — there is no microVM, no warm/hibernate,
+// no capacity to exhaust. The agenkit patterns provide the actual goroutine
+// fan-out when the node runs; this adapter holds cohort's lifecycle seam (bring
+// the entity to PhaseReady), it does not duplicate agenkit's concurrency.
+//
+// This is the real cohort fill that replaces M0's placeholder (telos#12): the
+// goroutine substrate is now reconciled by the unmodified cohort core, with a
+// transport.Placement carrying no cloud vocabulary.
 package inproc
 
 import (
 	"context"
+	"errors"
+	"sync"
+	"time"
 
 	"github.com/scttfrdmn/telos/acs"
+	"github.com/spore-host/cohort"
 )
 
-// Readiness is the placeholder lifecycle signal a substrate Observer reports.
-// "The launch is easy; the Observer is the design" (invariant 7) — the real
-// signal set arrives with cohort.Observer.
-type Readiness string
-
-const (
-	ReadyUnknown Readiness = "unknown"
-	ReadyPending Readiness = "pending"
-	ReadyReady   Readiness = "ready"
-	ReadyDone    Readiness = "done"
-	ReadyFailed  Readiness = "failed"
-)
-
-// Actuator is the placeholder for cohort.Actuator: it launches a unit of work.
-// TODO(cohort): replace with cohort.Actuator when spore-host/cohort is published.
-type Actuator interface {
-	// Launch starts the node's work on this substrate. In-process this is a
-	// goroutine in the same envelope; no isolation.
-	Launch(ctx context.Context, nodeID acs.NodeID) error
+// Substrate is the in-process (goroutine) cohort provider.
+type Substrate struct {
+	mu       sync.Mutex
+	launched map[cohort.EntityID]cohort.Observation
+	now      func() time.Time
 }
-
-// Observer is the placeholder for cohort.Observer: it reports readiness.
-// TODO(cohort): replace with cohort.Observer when spore-host/cohort is published.
-type Observer interface {
-	// Observe reports the current readiness of a launched node.
-	Observe(ctx context.Context, nodeID acs.NodeID) (Readiness, error)
-}
-
-// Substrate is the in-process substrate. M0 runs the whole graph here; the
-// agenkit patterns themselves provide the goroutine fan-out (e.g. ParallelAgent),
-// so this adapter is intentionally thin — it exists to hold the seam, not to
-// duplicate agenkit's concurrency.
-type Substrate struct{}
 
 // New returns the in-process substrate.
-func New() *Substrate { return &Substrate{} }
-
-// Transport reports the rung this substrate occupies.
-func (s *Substrate) Transport() acs.Transport { return acs.TransportGoroutine }
+func New() *Substrate {
+	return &Substrate{
+		launched: make(map[cohort.EntityID]cohort.Observation),
+		now:      time.Now,
+	}
+}
 
 // Name identifies the substrate in a node's Placement.
 func (s *Substrate) Name() string { return "inproc" }
 
-// Launch is a no-op in M0: the host instantiates agenkit agents directly and the
-// patterns spawn their own goroutines. Present so the Actuator seam is real.
-func (s *Substrate) Launch(ctx context.Context, nodeID acs.NodeID) error {
-	return ctx.Err()
+// Transport reports the rung this substrate occupies.
+func (s *Substrate) Transport() acs.Transport { return acs.TransportGoroutine }
+
+// --- cohort.Actuator ---------------------------------------------------------
+
+// Launch reserves a goroutine slot for the entity. In-process there is no
+// provisioning latency and no capacity limit, so the slot is immediately
+// available: the entity is observed StateLaunching here and reports StateRunning
+// on the next Observe. The Placement's rung name is recorded for legibility.
+func (s *Substrate) Launch(ctx context.Context, intent cohort.EntityIntent) (cohort.Observation, error) {
+	if err := ctx.Err(); err != nil {
+		return cohort.Observation{}, err
+	}
+	obs := cohort.Observation{
+		ID:         intent.ID,
+		Generation: intent.Generation,
+		State:      cohort.StateLaunching,
+		ProviderID: "goroutine:" + string(intent.ID),
+		ObservedAt: s.now(),
+	}
+	s.mu.Lock()
+	s.launched[intent.ID] = obs
+	s.mu.Unlock()
+	return obs, nil
 }
 
-// Observe reports readiness. In-process work is synchronous, so a launched node
-// is reported ready immediately.
-func (s *Substrate) Observe(ctx context.Context, nodeID acs.NodeID) (Readiness, error) {
+// Start resumes an entity. In-process there is no warm state, so Start is
+// equivalent to a fresh slot — it returns the entity to Running.
+func (s *Substrate) Start(ctx context.Context, id cohort.EntityID) (cohort.Observation, error) {
 	if err := ctx.Err(); err != nil {
-		return ReadyFailed, err
+		return cohort.Observation{}, err
 	}
-	return ReadyReady, nil
+	return s.transition(id, cohort.StateRunning), nil
+}
+
+// Stop is a no-op for the goroutine rung: there is nothing warm to keep. It
+// accepts StopWarm (the only mode meaningful in-process) and records Stopped.
+func (s *Substrate) Stop(ctx context.Context, id cohort.EntityID, mode cohort.StopMode) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	s.transition(id, cohort.StateStopped)
+	return nil
+}
+
+// Terminate releases the goroutine slot. Idempotent.
+func (s *Substrate) Terminate(ctx context.Context, id cohort.EntityID) error {
+	s.mu.Lock()
+	delete(s.launched, id)
+	s.mu.Unlock()
+	return nil
+}
+
+// --- cohort.Observer ---------------------------------------------------------
+
+// Observe reports current state. A launched in-process entity is synchronously
+// Running (no provisioning lag). An id never launched is StateUnknown — lag, not
+// absence (cohort's eventual-consistency rule; the reconciler uses the
+// idempotency token as ground truth, not the Observer).
+func (s *Substrate) Observe(ctx context.Context, ids []cohort.EntityID) ([]cohort.Observation, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]cohort.Observation, 0, len(ids))
+	for _, id := range ids {
+		if obs, ok := s.launched[id]; ok {
+			// Slot is live: report Running.
+			obs.State = cohort.StateRunning
+			obs.ObservedAt = s.now()
+			s.launched[id] = obs
+			out = append(out, obs)
+		} else {
+			out = append(out, cohort.Observation{ID: id, State: cohort.StateUnknown, ObservedAt: s.now()})
+		}
+	}
+	return out, nil
+}
+
+// --- cohort.Classifier -------------------------------------------------------
+
+// Classify maps an in-process error to a cohort Fault. The goroutine rung cannot
+// ICE (no capacity), so it never returns CapacityExhausted. Context cancellation
+// and deadline are Terminal-for-this-attempt (the kill-switch / exhaustion);
+// everything else is Terminal with the verbatim error preserved for legibility.
+// It NEVER returns FaultAmbiguous (cohort contract — in-process mutation status
+// is always known).
+func (s *Substrate) Classify(err error) cohort.Fault {
+	switch {
+	case err == nil:
+		return cohort.Fault{Class: cohort.FaultTerminal, Code: "Nil"}
+	case errors.Is(err, context.Canceled):
+		return cohort.Fault{Class: cohort.FaultTerminal, Code: "ContextCanceled", Message: err.Error()}
+	case errors.Is(err, context.DeadlineExceeded):
+		return cohort.Fault{Class: cohort.FaultTerminal, Code: "DeadlineExceeded", Message: err.Error()}
+	default:
+		return cohort.Fault{Class: cohort.FaultTerminal, Code: "InProcError", Message: err.Error()}
+	}
+}
+
+// transition updates a tracked entity's state (or records it if absent).
+func (s *Substrate) transition(id cohort.EntityID, st cohort.LifecycleState) cohort.Observation {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	obs := s.launched[id]
+	obs.ID = id
+	obs.State = st
+	obs.ObservedAt = s.now()
+	if obs.ProviderID == "" {
+		obs.ProviderID = "goroutine:" + string(id)
+	}
+	s.launched[id] = obs
+	return obs
 }
 
 var (
-	_ Actuator = (*Substrate)(nil)
-	_ Observer = (*Substrate)(nil)
+	_ cohort.Actuator   = (*Substrate)(nil)
+	_ cohort.Observer   = (*Substrate)(nil)
+	_ cohort.Classifier = (*Substrate)(nil)
 )

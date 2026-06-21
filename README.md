@@ -63,8 +63,14 @@ make docker-arm64
 - [`github.com/scttfrdmn/agenkit-go`](https://github.com/scttfrdmn/agenkit-go) —
   agent patterns and the core `Agent` interface (using the distribution mirror;
   see [scttfrdmn/agenkit#660](https://github.com/scttfrdmn/agenkit/issues/660)).
-- `spore-host/cohort` — the reconciler. **Not yet published**; the in-process
-  substrate uses a local placeholder interface until it lands.
+- [`github.com/spore-host/cohort`](https://github.com/spore-host/cohort) `@v0.2.0`
+  — the reconciliation core. Telos is its **third independent consumer** (after
+  MPI and Slurm): the substrate adapters (`substrate/inproc`, `substrate/agentcore`)
+  fill cohort's provider seam (Actuator/Observer/Classifier) and supply a transport
+  `Placement` (goroutine → a2a-session → instance) carrying no cloud vocabulary.
+  cohort's `ports.go` is unmodified; the v0.2.0 `Placement` generalization
+  ([cohort#1](https://github.com/spore-host/cohort/issues/1)) was earned by this
+  third-consumer report.
 
 ## License
 
