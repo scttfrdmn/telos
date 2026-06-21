@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/scttfrdmn/telos/acs"
+	"github.com/scttfrdmn/telos/compute"
 	"github.com/scttfrdmn/telos/governor"
 )
 
@@ -27,6 +28,16 @@ type Chokepoint struct {
 	// over. A call is short, so this is small; it keeps reservations rate-shaped
 	// (invariant 4) rather than letting a call claim the whole grant period.
 	reservePeriod time.Duration
+
+	// launcher / pricer back the compute (RunWork) path (§8). Both nil = compute
+	// disabled (RunWork returns ErrComputePathNotImplemented). They are
+	// compute.Launcher / compute.Pricer INTERFACES — the concrete AWS impl lives in
+	// the separate substrate/sporehost module, so the gateway never imports the
+	// AWS-SDK tree (the core stays light; dep isolation).
+	launcher compute.Launcher
+	pricer   compute.Pricer
+	// computeCurrency denominates synthesized compute cost (default USD).
+	computeCurrency string
 }
 
 // Config configures a Chokepoint.
@@ -41,6 +52,13 @@ type Config struct {
 	DefaultMaxTokens int
 	// ReservePeriod is the per-call reservation horizon (default 1 minute).
 	ReservePeriod time.Duration
+
+	// Launcher / Pricer enable the compute (RunWork) path. Both nil = compute
+	// disabled. Supplied by the host wiring the substrate/sporehost module.
+	Launcher compute.Launcher
+	Pricer   compute.Pricer
+	// ComputeCurrency denominates synthesized compute cost (default USD).
+	ComputeCurrency string
 }
 
 // New builds a Chokepoint.
@@ -62,12 +80,19 @@ func New(cfg Config) (*Chokepoint, error) {
 	if period <= 0 {
 		period = time.Minute
 	}
+	cur := cfg.ComputeCurrency
+	if cur == "" {
+		cur = "USD"
+	}
 	return &Chokepoint{
 		backends:         cfg.Backends,
 		gov:              cfg.Governor,
 		costs:            cfg.Costs,
 		defaultMaxTokens: maxTok,
 		reservePeriod:    period,
+		launcher:         cfg.Launcher,
+		pricer:           cfg.Pricer,
+		computeCurrency:  cur,
 	}, nil
 }
 
@@ -149,10 +174,7 @@ func (c *Chokepoint) Invoke(ctx context.Context, binding acs.ModelBinding, req M
 	}, actual, nil
 }
 
-// RunWork is the synthesized-compute path — stubbed until M6.
-func (c *Chokepoint) RunWork(ctx context.Context, spec WorkloadSpec) (WorkResult, acs.Cost, error) {
-	return WorkResult{}, acs.Cost{}, ErrComputePathNotImplemented
-}
+// RunWork — the metered compute path — is implemented in runwork.go.
 
 // estimateInputTokens approximates prompt tokens from message content. M1 uses
 // the standard ~4-chars-per-token heuristic — good enough for a worst-case

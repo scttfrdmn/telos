@@ -17,8 +17,12 @@ package gateway
 import (
 	"context"
 
+	"time"
+
 	"github.com/scttfrdmn/agenkit-go/agenkit"
+	"github.com/scttfrdmn/telos/acceptance"
 	"github.com/scttfrdmn/telos/acs"
+	"github.com/scttfrdmn/telos/compute"
 )
 
 // Gateway is the chokepoint for all metered work (architecture §5).
@@ -29,8 +33,11 @@ type Gateway interface {
 	// cannot tell which backend served the call.
 	Invoke(ctx context.Context, binding acs.ModelBinding, req ModelRequest) (ModelResponse, acs.Cost, error)
 
-	// RunWork runs one synthesized computation. STUBBED in M1 — the compute path
-	// (spore.host via MCP) lands in M6. Returns ErrComputePathNotImplemented.
+	// RunWork runs one synthesized computation through the chokepoint (§8): estimate
+	// (frontier price × duration) → escrow → launch via the compute.Launcher →
+	// meter elapsed×rate → settle. Cost is ESTIMATED, not billed, and tagged
+	// synthesized (modeled, not metered-truth). No agent gets raw launch access —
+	// the only path to a launch is here (invariant 5, same seal as model calls).
 	RunWork(ctx context.Context, spec WorkloadSpec) (WorkResult, acs.Cost, error)
 }
 
@@ -74,12 +81,55 @@ type ModelResponse struct {
 	Backend string
 }
 
-// WorkloadSpec is a synthesized-compute request (architecture §8). Defined here
-// so the interface is complete; populated in M6.
+// WorkloadSpec is a synthesized-compute request (architecture §8): a
+// ComputeSynthesis agent FRAMES the requirement (method, data-by-ref, resources,
+// lifecycle), it does not write execution code. The gateway estimates+escrows it,
+// the compute.Launcher runs it, the gateway meters the result.
 type WorkloadSpec struct {
-	// Method, data-by-ref, resource requirements, precision/kernel choices — the
-	// artifact spore.host's runner consumes. Fields land in M6.
+	// EntityID names this unit of compute (instance Name tag / cohort EntityID /
+	// orphan-guard key). IdempotencyToken makes a relaunch-after-crash safe.
+	EntityID         string
+	IdempotencyToken string
+
+	// Rung is the abstract placement (cpu/gpu/highmem, spot?) — the launcher maps
+	// it to a concrete instance type. No cloud vocabulary in the spec.
+	Rung compute.Rung
+
+	// EstimatedDuration is the worst-case wall-clock the gateway escrows against.
+	EstimatedDuration time.Duration
+
+	// Lifecycle is the launch-time self-destruct contract Telos sets and observes
+	// (TTL/idle/cost-limit/FSx). The on-node daemon enforces it; Telos doesn't babysit.
+	Lifecycle compute.Lifecycle
+
+	// DataRef / ResultRef pass state BY REFERENCE (S3/FSx), never inlined.
+	DataRef   acs.StateRef
+	ResultRef acs.StateRef
+
+	// SpotWebhookURL / Correlation wire the in-window spot-reclamation push
+	// (spawn v0.63.0). Correlation is Telos's opaque entity/grant key.
+	SpotWebhookURL string
+	Correlation    string
+
+	// Provenance threads up to the result's claim — an UNATTESTED compute result
+	// fails acceptance, exactly as an unprovenanced literature claim does (§8/M3).
+	Provenance []acceptance.Source
 }
 
-// WorkResult is the result of a synthesized computation. Populated in M6.
-type WorkResult struct{}
+// WorkResult is the result of a synthesized computation.
+type WorkResult struct {
+	EntityID string
+	// ResultRef is where the output landed (S3/FSx), by reference.
+	ResultRef acs.StateRef
+	// Disposition is WHY the unit ended (idle-stop→surplus, ttl→deadline,
+	// cost-limit→exhaustion, spot→fault, complete→done) — the four-exit mapping.
+	Disposition compute.Disposition
+	// ComputeSeconds is the accrued modeled-cost basis.
+	ComputeSeconds int64
+	// Record is the acceptance Record (with provenance) the verdict judges.
+	Record acceptance.Record
+	// FSx, if non-nil, is the SEPARATE perishable-rectangle ledger line for a
+	// filesystem this work provisioned — its hourly cost is attributed apart from
+	// the instance cost (§8/M6), so a durable filesystem's accrual is never hidden.
+	FSx *FSxLine
+}

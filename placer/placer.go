@@ -55,13 +55,18 @@ func (d Decision) AsACS() acs.Placement {
 // session rung by the first trigger that fires. The triggers, in evaluation
 // order (first wins):
 //
-//  1. Trust isolation/untrusted — an isolated or hostile-input node needs its
-//     own session envelope, not the parent's goroutine tree (the keystone reason
-//     the A2A rung exists).
-//  2. Resource gravity — data/model/compute gravity pulls a node off the shared
-//     in-process pool toward an isolated session (and, at M6/M7, an instance).
+//  1. Resource gravity — data/model/compute gravity (GPU-in-process, huge memory,
+//     a local model, sovereign data, heavy synthesized compute) demands the
+//     INSTANCE rung (spore.host), the third transport (§7, M6). This is checked
+//     first because it is the strongest pull: a GPU job can't run in a goroutine
+//     or a shared session.
+//  2. Trust isolation/untrusted — an isolated or hostile-input node with no
+//     resource gravity needs its own session envelope (the A2A rung), not the
+//     parent's goroutine tree.
 //
 // A node with neither trigger stays on the goroutine rung (the default).
+// First-trigger-wins, gravity before trust: a GPU+isolated node lands on an
+// instance (which is also isolated), not merely an A2A session.
 type FirstTrigger struct{}
 
 // New returns the first-trigger-wins placer.
@@ -75,20 +80,24 @@ func (p *FirstTrigger) Place(ctx context.Context, n *acs.Node) (Decision, error)
 
 	rung, trigger := transport.RungGoroutine, "default"
 
-	// Trigger 1: trust boundary. Isolated or untrusted → A2A session.
-	switch n.Trust {
-	case acs.TrustIsolated:
-		rung, trigger = transport.RungA2ASession, "trust:isolated"
-	case acs.TrustUntrusted:
-		rung, trigger = transport.RungA2ASession, "trust:untrusted"
+	// Trigger 1 (strongest): resource gravity → the INSTANCE rung (spore.host).
+	// GPU-in-process / huge memory / local model / sovereign data / heavy compute
+	// can't run in a goroutine or a shared session — it needs its own instance (§7,
+	// the third transport, M6).
+	if n.Gravity != "" && n.Gravity != acs.GravityNone {
+		rung, trigger = transport.RungInstance, "gravity:"+string(n.Gravity)
 	}
 
-	// Trigger 2: resource gravity (only if trust didn't already promote —
-	// first-trigger-wins). Any non-none gravity pulls the node toward isolation.
-	// (Data/compute gravity escalates to an instance at M6/M7; in M4 it lands on
-	// the A2A session rung.)
-	if rung == transport.RungGoroutine && n.Gravity != "" && n.Gravity != acs.GravityNone {
-		rung, trigger = transport.RungA2ASession, "gravity:"+string(n.Gravity)
+	// Trigger 2: trust boundary (only if gravity didn't already promote —
+	// first-trigger-wins). An isolated/untrusted node with no resource gravity
+	// needs its own session envelope (the A2A rung), not an instance.
+	if rung == transport.RungGoroutine {
+		switch n.Trust {
+		case acs.TrustIsolated:
+			rung, trigger = transport.RungA2ASession, "trust:isolated"
+		case acs.TrustUntrusted:
+			rung, trigger = transport.RungA2ASession, "trust:untrusted"
+		}
 	}
 
 	return Decision{
@@ -105,7 +114,7 @@ func substrateFor(r transport.Rung) string {
 	case transport.RungA2ASession:
 		return "agentcore"
 	case transport.RungInstance:
-		return "sporehost" // M6/M7 — not yet selectable by the placer
+		return "sporehost" // the compute substrate (M6): GPU / huge-mem / sovereign / heavy compute
 	default:
 		return "inproc"
 	}

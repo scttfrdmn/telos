@@ -1,4 +1,10 @@
-# Telos — Architecture (v0.2.1)
+# Telos — Architecture (v0.2.2)
+
+<!-- v0.2.2: §8 rewritten from spore.host source (study report) — in-process Go
+     libraries not MCP, lifecycle delegated/poll-and-infer, substrate generalizes
+     mpicohort, FSx perishable-rectangle primitive, spot-reclaim push (spawn
+     v0.63.0). §8's prior MCP framing was written before the source was read. -->
+
 
 > A research question synthesizes a budgeted agent graph that investigates it
 > autonomously over heterogeneous runtimes — stopping intelligently, completing
@@ -94,21 +100,15 @@ literature-search tool.
 | **burnrate** | reservoir-over-clock controller; modulates default standard of proof | new | `telos/burnrate` |
 | **placer** | bound node → transport + substrate | new (truffle rungs + governor) | `telos/placer` |
 | **acceptance** | disinterested verdict node, separate trust + budget envelope | new (hard seam; policy open) | `telos/acceptance` |
-| **cohort** | reconcile the named set across substrates | to be extracted (not yet published; placeholder in `substrate/inproc` until M4 — telos#12) | `spore-host/cohort` |
+| **cohort** | reconcile the named set across substrates | existing | `spore-host/cohort` |
 | **host** | generic agenkit-go runtime on the AgentCore contract | new | `telos/host` |
 | **substrate/inproc** | goroutine supervisor adapter | new | `telos/substrate/inproc` |
 | **substrate/agentcore** | AgentCore Actuator + Observer | new | `telos/substrate/agentcore` |
-| **substrate/sporehost** | spore.host Actuator + Observer; compute backend via MCP | new | `telos/substrate/sporehost` |
+| **substrate/sporehost** | spore.host Actuator + Observer; in-process Go libs (spawn/truffle/lagotto), generalizes mpicohort | new | `telos/substrate/sporehost` |
 | **attest** | provenance + reproducibility for emitted claims | provabl/attest/Copland | existing |
 | **ledger** | distributed conservation + WAL + surplus + neutral pool | new (in governor) | `telos/ledger` |
 
-Imports agenkit and `spore-host/cohort` as libraries. The agenkit Go module is
-`github.com/scttfrdmn/agenkit-go` (a distribution mirror; module at repo root) —
-the canonical monorepo path `github.com/scttfrdmn/agenkit/agenkit-go` is not
-`go get`-able because committed binaries exceed Go's 500 MB zip ceiling
-(scttfrdmn/agenkit#660). Swap back to the canonical path once cleaned (telos#13).
-`spore-host/cohort` is **not yet published** — it must be extracted before M4
-(telos#12); `substrate/inproc` runs on a local placeholder until then. Go 1.26,
+Imports `scttfrdmn/agenkit` and `spore-host/cohort` as libraries. Go 1.26,
 Apache 2.0. State in GitHub Issues / Projects / Milestones.
 
 ---
@@ -308,33 +308,99 @@ per rung.
 
 ## 8. Compute synthesis & the spore.host compute backend
 
+> **v0.2.2 — rewritten from source.** The prior §8 ("backend via MCP, expose the
+> suite as tools") was written before the spore.host source was read. It was wrong
+> in two ways now corrected: the integration is **in-process Go libraries, not
+> MCP**, and Telos **delegates lifecycle to spore.host**, it doesn't drive
+> provision→teardown. See `docs/spore-host-substrate-report.md` for the
+> source-cited study; this section reflects its findings plus spawn v0.63.0.
+
 The planner synthesizes *agent structure*; agents synthesize *optimized
 computation* at runtime — deferred because the right computation isn't knowable
 until an agent faces its sub-question.
 
 - A **ComputeSynthesis** agent emits a **WorkloadSpec** (method, data-by-ref,
-  resource requirements, precision/kernel choices) — the artifact fieldcraft /
-  queuezero already consume. Agent = workload *generator* over the existing
-  *runner*.
+  resource requirements, precision/kernel choices). Agent = workload *generator*
+  over an existing *runner* — it does not write execution code, it frames the
+  requirement.
 - **Two nested optimizations, separate.** *Science* (method/model/data) is the
-  agent's; *execution* (instance, precision, pipeline, parallelism) is
-  reckoner/truffle/advise's dominance-frontier search — the agent *calls* it.
-- **Exploration is metered**: config-space search depth is gated by the value at
-  stake (cheap → closed-form pick; expensive Trainium job → real frontier search).
-- **Budget unifies**: compute is estimated (reckoner), escrowed (governor),
-  metered (gateway) like a model call. Three spend types — model calls, spawns,
-  synthesized compute — one chokepoint. Deciding to spend compute is a high-value
-  admission gate.
-- **Backend = spore.host on AWS, via MCP**, registered as an AgentCore Gateway
-  target, Cedar/LKI gating compute-spend authority. *Expansion needed:* expose the
-  suite as tools — `truffle` (rungs), `reckoner` (frontier), `spawn`/`queuezero`/
-  `cohort` (provision+run), `spored` (observe), teardown (lifecycle).
-- **Attestation**: generated results must be attested + reproducible
-  (provabl/attest/Copland; stegano for synthetic intermediates).
+  agent's; *execution* (instance, precision, pipeline, parallelism) is the
+  dominance-frontier search the agent **calls**, via `truffle` (spot/quota/type
+  discovery + forward price) and reckoner. Exploration depth is itself metered —
+  gated by the value at stake (cheap → closed-form pick; expensive job → real
+  frontier search).
+- **Budget unifies**: compute is estimated (truffle frontier + reckoner),
+  escrowed (governor), metered (gateway `RunWork`) like a model call. Three spend
+  types — model calls, spawns, synthesized compute — one chokepoint. Deciding to
+  spend compute is a high-value admission gate.
 
-Self-similar: planner emits ACS → host instantiates agents; ComputeSynthesis
-emits WorkloadSpec → spore.host instantiates compute. Telos is the question-driven
-front end to the whole back-end portfolio; ComputeSynthesis is the seam.
+**Backend = spore.host Go libraries, in-process (NOT MCP).** spawn ships a
+first-class library API; `spore-host-mcp` exists only for external AI assistants
+and is **not** Telos's path (Telos is Go calling Go). The substrate imports:
+- `spawn/pkg/aws.Client` + `spawn/pkg/launcher.Provision` — launch / terminate /
+  stop(hibernate) / start / state / list / tag. The lifecycle actuator+observer.
+- `truffle/pkg/aws` — `SearchInstanceTypes` / `GetSpotPricing` / `GetQuotas` /
+  `CanLaunch`. The frontier/discovery input (read-only).
+- `lagotto/pkg/watcher` — optional patience primitive for scarce-capacity (GPU /
+  capacity-block) launches: the patient rung.
+
+**The substrate generalizes `spawn/pkg/mpicohort`** — an existing, production
+cohort provider over `pkg/aws` with the same poll-and-map Observer / EC2-error
+Classifier shape as Telos's M4 AgentCore substrate, already consuming the v0.2.0
+`RungPlacement` seam and the cohort idempotency token. Telos's compute substrate
+is the 1-cohort (one-shot job) and collective (all-or-nothing sweep) cases of that
+proven adapter, not a new invention.
+
+**spore.host's grain — design with it, not against it.** spawn instances are
+*fire-and-forget with a self-destruct contract*: you encode policy at launch
+(TTL, idle-timeout, cost-limit, on-complete, FSx lifetime) as tags; the on-node
+daemon (`spored`) enforces it; the node owns its own death. Telos **delegates**
+lifecycle and **observes** it; it does not babysit. Two consequences:
+- **Observer is poll-and-infer.** Idle-stop, TTL-terminate, and cost-limit are
+  *autonomous, post-Ready* events the Observer sees as an EC2 `State` change it
+  interprets against `spawn:*` tags (TTL deadline, idle, `spawn:compute-seconds`)
+  to learn *why*. cohort's phase model has no "self-retired" phase (confirmed gap,
+  not break) — the substrate disambiguates via tags. → **Lifecycle mapping:**
+  idle-stop = early completion that **banks surplus**; TTL-fire = **deadline
+  exit**; cost-limit = **exhaustion**; spot-reclaim = **fault** (below).
+- **Spot reclamation has an in-window push (spawn v0.63.0).** Originally the
+  substrate's single biggest risk (reclamation visible only as a polled
+  `terminated`, window and reason lost). Resolved upstream: spawn now fires an
+  **optional, fire-once, best-effort, 2s-boxed webhook** from the spot handler
+  carrying the reclamation fact-struct (instance, reason, action, deadline,
+  compute-seconds) plus an **opaque `WebhookCorrelation`** echoed verbatim. Telos
+  sets `WebhookCorrelation` to its cohort-entity/grant key at launch; on
+  reclamation it correlates → settles spent compute as a **fault-with-reason**
+  (the M5 fault-Record-through-the-WAL path) → re-places on lagotto's patient rung,
+  all inside the ~2-min window. Poll-and-infer remains the always-correct baseline;
+  the webhook is the in-window upgrade (opt-in, no dependency to build against).
+
+**Cost is estimated, not billed.** No live `Launch` handle carries cost; the
+gateway computes it from elapsed-wall-clock × rate (truffle for the rate/frontier,
+or the `spawn:compute-seconds` tag). This is the M1 synthesized-cost discipline
+extended to compute — the gateway *owns* the estimate and tags it as modeled, not
+metered-truth.
+
+**FSx Lustre is a first-class perishable rectangle.** `LaunchConfig.FSxLifecycle`
+(ephemeral|durable, **required**) + `FSxTTL`, provisioned by `launcher.Provision`,
+mounted by spored, with S3 import/export. A durable filesystem bills hourly
+independent of any instance — so the governor must attribute and tear down FSx
+lifetime explicitly (per-run ephemeral vs reused durable), not fold it into
+instance cost. (Note: the microbiome demo does **not** use FSx — it stages via S3
+work-dir; the demo is a capability reference, not the data-path template.)
+
+**Attestation**: generated results must be attested + reproducible
+(provabl/attest/Copland; stegano for synthetic intermediates). Provenance runs
+through staged artifacts, not just primary sources: claim → computation → staged
+input → transform → source.
+
+Self-similar: planner emits ACS → host instantiates agents; ComputeSynthesis emits
+WorkloadSpec → the substrate generalizes mpicohort to instantiate compute. Telos is
+the question-driven front end to the whole back-end portfolio; ComputeSynthesis is
+the seam. **Compositions to ignore as templates:** nf-spawn (Nextflow-only), the
+microbiome demo (Python/CLI), MCP, and spawn's orchestrator/scheduler — build on
+the primitives (`pkg/aws`, `pkg/launcher`, FSx ops, `truffle`, `mpicohort`), not
+the opinionated compositions over them.
 
 ---
 

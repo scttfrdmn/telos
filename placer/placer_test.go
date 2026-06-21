@@ -48,22 +48,29 @@ func TestPlace_UntrustedForcesA2A(t *testing.T) {
 	}
 }
 
-// Trigger 2: resource gravity promotes a same-envelope node to A2A.
-func TestPlace_GravityForcesA2A(t *testing.T) {
-	d := place(t, &acs.Node{ID: "n", Trust: acs.TrustSameEnvelope, Gravity: acs.GravityData})
-	if d.Rung != transport.RungA2ASession {
-		t.Fatalf("data gravity should force a2a, got %+v", d)
-	}
-	if d.Trigger != "gravity:data" {
-		t.Fatalf("trigger = %q", d.Trigger)
+// Trigger 1 (M6): resource gravity promotes to the INSTANCE rung (spore.host) —
+// GPU/huge-mem/sovereign/heavy-compute can't run in a goroutine or shared session.
+func TestPlace_GravityForcesInstance(t *testing.T) {
+	for _, g := range []acs.Gravity{acs.GravityData, acs.GravityModel, acs.GravityCompute} {
+		d := place(t, &acs.Node{ID: "n", Trust: acs.TrustSameEnvelope, Gravity: g})
+		if d.Rung != transport.RungInstance || d.Substrate != "sporehost" {
+			t.Fatalf("%s gravity should force instance/sporehost, got %+v", g, d)
+		}
+		if d.Trigger != "gravity:"+string(g) {
+			t.Fatalf("trigger = %q", d.Trigger)
+		}
 	}
 }
 
-// First-trigger-wins: trust isolation wins over gravity (evaluated first).
-func TestPlace_FirstTriggerWins(t *testing.T) {
+// First-trigger-wins (M6): gravity wins over trust — a GPU+isolated node lands on
+// an instance (itself isolated), not merely an A2A session.
+func TestPlace_GravityWinsOverTrust(t *testing.T) {
 	d := place(t, &acs.Node{ID: "n", Trust: acs.TrustIsolated, Gravity: acs.GravityCompute})
-	if d.Trigger != "trust:isolated" {
-		t.Fatalf("trust should win over gravity (first-trigger), got trigger %q", d.Trigger)
+	if d.Rung != transport.RungInstance {
+		t.Fatalf("gravity (instance) should win over trust (a2a), got %+v", d)
+	}
+	if d.Trigger != "gravity:compute" {
+		t.Fatalf("trigger = %q, want gravity:compute", d.Trigger)
 	}
 }
 
