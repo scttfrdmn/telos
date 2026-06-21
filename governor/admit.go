@@ -21,13 +21,33 @@ type Quote struct {
 	Over time.Duration
 }
 
-// Reservoir is the remaining grant amount available to draw against — the
-// "amount" half of the grant (architecture §3: remaining reservoir).
+// Reservoir is the grant amount available to draw against — the "amount" half of
+// the grant (architecture §3: remaining reservoir). It carries the original
+// allocation too, so burn-rate can compute reservoir-FRACTION (how much is left
+// relative to how much there was) for its landing signal.
 type Reservoir struct {
 	// Remaining is the unescrowed, unspent amount left in the grant.
 	Remaining float64
-	// Currency denominates Remaining.
+	// Original is the grant's full allocation (Remaining ≤ Original). Zero when
+	// unknown; burn-rate then has no reservoir-fraction signal.
+	Original float64
+	// Currency denominates the amounts.
 	Currency string
+}
+
+// Fraction returns remaining/original in [0,1], or 0 when the original is unknown.
+func (r Reservoir) Fraction() float64 {
+	if r.Original <= 0 {
+		return 0
+	}
+	f := r.Remaining / r.Original
+	if f < 0 {
+		return 0
+	}
+	if f > 1 {
+		return 1
+	}
+	return f
 }
 
 // Clock is the time half of the grant: how much of the grant period is left
@@ -140,9 +160,19 @@ func (m *Mem) Admit(ctx context.Context, q Quote, reservoir Reservoir, clock Clo
 	return admissionPolicy(q, reservoir, clock), nil
 }
 
-// ReservoirFor reports the Reservoir (remaining amount) of a grant — a convenience
-// for callers assembling an Admit call from a live grant.
+// ReservoirFor reports the Reservoir of a grant (remaining + original) — a
+// convenience for callers assembling an Admit or a burn-rate signal from a live
+// grant.
 func (m *Mem) ReservoirFor(id GrantID) Reservoir {
-	b := m.Remaining(id)
-	return Reservoir{Remaining: b.Amount, Currency: b.Denomination()}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	g, ok := m.grants[id]
+	if !ok {
+		return Reservoir{}
+	}
+	rem := g.remainingAmount()
+	if rem < 0 {
+		rem = 0
+	}
+	return Reservoir{Remaining: rem, Original: g.reservoir.Amount, Currency: g.reservoir.Denomination()}
 }

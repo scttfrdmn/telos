@@ -106,33 +106,56 @@ type Node struct {
 	Provenance *Provenance   `json:"provenance,omitempty"` // threaded up to claims
 }
 
-// DefaultStandard returns the run's effective default standard of proof,
-// substituting the PLACEHOLDER default (StandardConcordant) when unset.
+// SeedDefaultStandard returns the standard of proof the SEED fixes, substituting
+// the system fallback (StandardConcordant) when unset.
 //
-// The fallback is provisional, not settled policy: until burnrate (M2) modulates
-// the standard and §15 fork #4 settles how the per-question standard is
-// determined, StandardConcordant is simply the only standard the system has — see
-// the StandardOfProof doc. Do not read this fallback as a considered default.
-func (s *Spec) DefaultStandard() StandardOfProof {
+// This is the FALLBACK, not the source of truth. As of M2, burn-rate is the
+// source of the run default (a visible function of reservoir-over-clock); the
+// seed value is used only when burn-rate has no signal. Resolution order lives in
+// ResolveStandard. (acs stays free of a burnrate import — the burn-rate default
+// is passed in.)
+func (s *Spec) SeedDefaultStandard() StandardOfProof {
 	if s.Standard == "" {
-		return placeholderDefaultStandard
+		return systemFallbackStandard
 	}
 	return s.Standard
 }
 
-// placeholderDefaultStandard is the provisional system default standard of proof.
-// TODO(M2, §15#4): replace this constant fallback with burnrate-modulated
-// selection once burnrate exists; it is not a decided default today.
-const placeholderDefaultStandard = StandardConcordant
+// systemFallbackStandard is the last-resort default when neither a per-node
+// override, nor burn-rate, nor the seed supplies a standard. Still provisional;
+// §15 fork #4 (how the per-question standard is determined) remains open.
+const systemFallbackStandard = StandardConcordant
 
-// EffectiveStandard returns the standard of proof a node is held to: its own
-// override if set, otherwise the run default.
-func (s *Spec) EffectiveStandard(n *Node) StandardOfProof {
+// ResolveStandard returns the standard a node is held to, by precedence:
+//
+//  1. the node's explicit override (per-question stakes win), else
+//  2. burnRateDefault — burn-rate's reservoir-over-clock default, when it has a
+//     signal (pass "" when burn-rate has no opinion), else
+//  3. the seed default (SeedDefaultStandard), the recursion's fallback.
+//
+// This makes burn-rate THE default while keeping the seed value as the fallback,
+// and preserves a per-node override slot for stakes-gating (the stakes POLICY is
+// later; the slot exists now). §15 #4 stays open.
+func (s *Spec) ResolveStandard(n *Node, burnRateDefault StandardOfProof) StandardOfProof {
 	if n != nil && n.Standard != "" {
 		return n.Standard
 	}
-	return s.DefaultStandard()
+	if burnRateDefault != "" {
+		return burnRateDefault
+	}
+	return s.SeedDefaultStandard()
 }
+
+// EffectiveStandard returns the standard a node is held to with NO burn-rate
+// signal — i.e. node override, else seed default. Equivalent to
+// ResolveStandard(n, ""). Retained for callers without a live grant signal.
+func (s *Spec) EffectiveStandard(n *Node) StandardOfProof {
+	return s.ResolveStandard(n, "")
+}
+
+// DefaultStandard is the seed default (no burn-rate, no node). Kept for callers
+// and tests that want the run's baseline; equivalent to SeedDefaultStandard.
+func (s *Spec) DefaultStandard() StandardOfProof { return s.SeedDefaultStandard() }
 
 // Edge connects two nodes. Dataflow edges pass state BY REFERENCE so the
 // working footprint stays the working slice (architecture §4).
