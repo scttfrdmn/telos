@@ -65,6 +65,8 @@ github.com/sashabaranov/go-openai v1.41.2 h1:vfPRBZNMpnqu8ELsclWcAvF19lDNgh1t6TV
 github.com/sashabaranov/go-openai v1.41.2/go.mod h1:lj5b/K+zjTSFxVLijLSTDZuP7adOgerWeFyZLUhAKRg=
 github.com/scttfrdmn/agenkit-go v0.85.0 h1:8h6XmeumKPb4MYEZ7sT44p+FpqdEAV3NgAM5MD1wElg=
 github.com/scttfrdmn/agenkit-go v0.85.0/go.mod h1:1NGwzMCelNvHxlpPjXtfxeGUVkC2fyylST5vDavjopw=
+github.com/scttfrdmn/agenkit-go v0.86.0 h1:naN7XwGgOST+SJoD5hh8K3b12BtkvRtZSLbhPhMgKmQ=
+github.com/scttfrdmn/agenkit-go v0.86.0/go.mod h1:1NGwzMCelNvHxlpPjXtfxeGUVkC2fyylST5vDavjopw=
 go.opentelemetry.io/auto/sdk v1.2.1 h1:jXsnJ4Lmnqd11kwkBV2LgLoFMZKizbCi5fNZ/ipaZ64=
 go.opentelemetry.io/auto/sdk v1.2.1/go.mod h1:KRTj+aOaElaLi+wW1kO/DZRXwkF4C5xPbEe3ZiIhN7Y=
 go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.67.0 h1:yI1/OhfEPy7J9eoa6Sj051C7n5dvpj0QX8g4sRchg04=

@@ -71,43 +71,20 @@ func callOptions(req ModelRequest) []llmadapter.CallOption {
 	return opts
 }
 
-// usageFromMessage normalizes the per-provider usage metadata that agenkit
-// adapters attach (Metadata["usage"] = {prompt_tokens, completion_tokens, ...}).
-// Bedrock stores int32, Ollama stores int — both are handled. Cache token fields
-// are read when present (best-effort; the Bedrock adapter does not yet forward
-// them — agenkit#665). Returns a zero usage if no usage metadata is present.
-//
-// When agenkit ships a typed Usage accessor (agenkit#664) this collapses to a
-// single call; until then this is the one place the untyped shape is parsed.
+// usageFromMessage normalizes the token usage an agenkit adapter records on a
+// response into our acs.TokenUsage. As of agenkit v0.86.0 (agenkit#664) the
+// adapter package exposes a typed, provider-normalized accessor — including the
+// Bedrock prompt-cache token counts added in the same release (agenkit#665) — so
+// this is now a thin mapping rather than hand-rolled metadata parsing.
 func usageFromMessage(msg *agenkit.Message) acs.TokenUsage {
-	if msg == nil || msg.Metadata == nil {
-		return acs.TokenUsage{}
-	}
-	raw, ok := msg.Metadata["usage"].(map[string]interface{})
+	u, ok := llmadapter.UsageFromMessage(msg)
 	if !ok {
 		return acs.TokenUsage{}
 	}
 	return acs.TokenUsage{
-		InputTokens:         asInt(raw["prompt_tokens"]),
-		OutputTokens:        asInt(raw["completion_tokens"]),
-		CacheReadTokens:     asInt(raw["cache_read_tokens"]),
-		CacheCreationTokens: asInt(raw["cache_creation_tokens"]),
-	}
-}
-
-// asInt coerces the numeric types agenkit adapters use for token counts (int,
-// int32, int64, float64 from JSON) into int. Unknown types yield 0.
-func asInt(v interface{}) int {
-	switch n := v.(type) {
-	case int:
-		return n
-	case int32:
-		return int(n)
-	case int64:
-		return int(n)
-	case float64:
-		return int(n)
-	default:
-		return 0
+		InputTokens:         u.PromptTokens,
+		OutputTokens:        u.CompletionTokens,
+		CacheReadTokens:     u.CacheReadTokens,
+		CacheCreationTokens: u.CacheCreationTokens,
 	}
 }
