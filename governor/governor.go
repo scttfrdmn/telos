@@ -8,18 +8,20 @@
 // here operates on acs.Budget (amount AND period); nothing reduces a grant to a
 // bare total.
 //
-// M1 SCOPE: this package provides the Governor interface and a conservation-only,
-// in-memory implementation (see mem.go) — just enough for the gateway's metered
-// loop to escrow and settle honestly. The following are deliberately DEFERRED to
-// M2 and are NOT implemented here:
-//   - Admit (admission against a Quote / Reservoir / Clock)
-//   - burnrate default-standard modulation
-//   - surplus-banks-iff-accepted (M1 settles unconditionally to actual cost)
-//   - WAL / persistence / distributed reconciliation
+// SCOPE: conservation (M1) + admission, surplus, and a WAL-backed ledger (M2).
+//   - Reserve/Settle/Release/Remaining: conservation, Σ child ≤ parent, fails
+//     closed (M1; mem.go).
+//   - Admit: the grant-RATE admission decision — budget left relative to TIME
+//     left (M2; admit.go).
+//   - Surplus = grant − actual, credited ONLY on acceptance (M2; the lexicographic
+//     acceptance→surplus ordering is enforced here and tested in the acceptance
+//     package).
+//   - WAL: escrow/settle written ahead to an append-only log and replayed on
+//     restart, so conservation survives a crash (M2; wal.go).
 //
-// Keeping the interface real (rather than a private counter in the gateway)
-// means the metered loop is exercised against the actual conservation contract
-// from M1, without pulling M2's open policy forward.
+// Still DEFERRED: distributed reconciliation across A2A (M5). burnrate (the
+// default-standard thermostat) lives in its own package and consumes the
+// reservoir/clock this governor exposes.
 package governor
 
 import (
@@ -36,9 +38,15 @@ type GrantID string
 // reserved directly against the run envelope, with no parent above it.
 const RootGrant GrantID = ""
 
-// Governor admits and conserves spend. M1 implements the conservation subset;
-// see the package doc for what M2 adds (Admit, surplus, WAL).
+// Governor admits and conserves spend.
 type Governor interface {
+	// Admit makes the grant-RATE admission decision for a proposed unit of work:
+	// is there budget left RELATIVE TO TIME LEFT (reservoir over clock), not just
+	// budget left. ASBB as a spend-rate controller, not a total controller. It
+	// reads (does not mutate) state; Reserve is the mutation that follows an
+	// admit. Fails closed.
+	Admit(ctx context.Context, q Quote, reservoir Reservoir, clock Clock) (Admission, error)
+
 	// Reserve escrows a child's request against its parent grant, returning a
 	// granted allocation. It FAILS CLOSED: if the request would breach
 	// conservation (Σ children > parent remaining) it returns an error and
@@ -62,18 +70,28 @@ type Governor interface {
 	Remaining(id GrantID) acs.Budget
 }
 
-// Outcome is the result a node reports at settlement. The architecture's full
-// Outcome (§5) carries ExitKind, Accepted (from a Verdict), Surplus, and Cause.
-// M1 needs only enough to settle; the acceptance-gated fields land in M2 with
-// the acceptance judgment, so they are present but inert here.
+// Outcome is the result a node reports at settlement (architecture §5).
 type Outcome struct {
-	// Exit is the four-exit kind. M1 nodes that simply complete use ExitDone.
+	// Exit is the four-exit kind. A node that simply completes uses ExitDone;
+	// ExitNegative (honest negative / contested) is a first-class completion.
 	Exit ExitKind
 
-	// Accepted comes from a Verdict rendered by a separate-envelope acceptance
-	// node — NEVER self-rendered (invariant 10). In M1 there is no acceptance
-	// judgment yet, so this is always false and surplus never banks on it.
+	// Accepted comes from a Verdict rendered by a SEPARATE-envelope acceptance
+	// node — NEVER self-rendered (invariant 10). Surplus banks only when this is
+	// true; an unaccepted outcome banks zero (abandonment, not thrift). The
+	// acceptance→surplus ordering is strictly lexicographic (see CompareOutcomes):
+	// acceptance dominates surplus, never a weighted sum.
 	Accepted bool
+
+	// Surplus is grant − actual for this work, expressed as a Budget (a rate, not
+	// a bare total — invariant 4). It is CREDITED only when Accepted; on an
+	// unaccepted outcome it banks nothing regardless of its size. Settle computes
+	// it; this field carries an outcome's reported surplus for ranking/feedback.
+	Surplus acs.Budget
+
+	// Cause explains WHY surplus arose (feeds planner/burnrate recalibration —
+	// architecture §9: "surplus is a signal").
+	Cause string
 }
 
 // ExitKind enumerates the four ranked exits (architecture invariant 9). Defined
