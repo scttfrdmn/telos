@@ -23,10 +23,11 @@
 //	(2) DEFAULT STANDARD OF PROOF — how sure we need to be by default. The seed
 //	    fixes StandardConcordant: grounded in direction-neutral verifiable facts
 //	    (cited sources exist and say what's claimed; computations reproduce),
-//	    preserving contested/negative as first-class. Not oracle (too costly as a
-//	    standing default; burnrate would decline it late in a grant) and not bare
-//	    assertion. How the per-question standard is DETERMINED remains an open
-//	    fork (§15 #4); this only sets the floor the recursion bottoms out on.
+//	    preserving contested/negative as first-class. This is a PLACEHOLDER, not a
+//	    considered default: it is the only standard the system has until burnrate
+//	    (M2) modulates it, and §15 fork #4 (how the per-question standard is
+//	    DETERMINED) is still open. The value will be revisited; don't read it as
+//	    settled.
 //
 // The seed also pins the keystone seam (invariant 10): acceptance is a node in a
 // SEPARATE trust envelope (TrustIsolated), wired as a sibling of production
@@ -210,7 +211,7 @@ func buildBootstrap() *acs.Spec {
 		Version:   acs.SchemaVersion,
 		Prompt:    "(* seed *) Investigate the question, honestly, within the grant.",
 		Archetype: acs.ArchetypeNone,      // the seed is the base case, not a research run
-		Standard:  acs.StandardConcordant, // <-- the system DEFAULT standard of proof
+		Standard:  acs.StandardConcordant, // PLACEHOLDER default — provisional pending burnrate (M2) + §15 #4; not settled policy
 		RootID:    "root",
 		Nodes:     nodes,
 		Budget:    acs.Budget{Amount: 100, Period: period, Currency: "USD"},

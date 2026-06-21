@@ -107,14 +107,23 @@ type Node struct {
 }
 
 // DefaultStandard returns the run's effective default standard of proof,
-// substituting the system default (StandardConcordant) when unset. This is the
-// value bootstrap.acs fixes and burnrate later modulates.
+// substituting the PLACEHOLDER default (StandardConcordant) when unset.
+//
+// The fallback is provisional, not settled policy: until burnrate (M2) modulates
+// the standard and §15 fork #4 settles how the per-question standard is
+// determined, StandardConcordant is simply the only standard the system has — see
+// the StandardOfProof doc. Do not read this fallback as a considered default.
 func (s *Spec) DefaultStandard() StandardOfProof {
 	if s.Standard == "" {
-		return StandardConcordant
+		return placeholderDefaultStandard
 	}
 	return s.Standard
 }
+
+// placeholderDefaultStandard is the provisional system default standard of proof.
+// TODO(M2, §15#4): replace this constant fallback with burnrate-modulated
+// selection once burnrate exists; it is not a decided default today.
+const placeholderDefaultStandard = StandardConcordant
 
 // EffectiveStandard returns the standard of proof a node is held to: its own
 // override if set, otherwise the run default.

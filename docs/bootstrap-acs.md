@@ -39,23 +39,29 @@ standard so it can never itself become a real spend.
 
 ## Default 2 — standard of proof (how sure we need to be)
 
-The seed fixes `standard: "concordant"` as the **system default**:
+The seed sets `standard: "concordant"` as a **placeholder default**:
 
 | Standard | Meaning |
 |---|---|
 | `scoping` | trivial bar — enough to produce a costed plan |
 | `plausible` | internally coherent, lightly sourced |
-| **`concordant`** | **default** — grounded in direction-neutral verifiable facts (cited sources exist and say what's claimed; computations reproduce) |
+| **`concordant`** | **placeholder default** — grounded in direction-neutral verifiable facts (cited sources exist and say what's claimed; computations reproduce) |
 | `oracle` | oracle-verified where an oracle exists (clinical-grade) |
 
-`concordant` is chosen deliberately: not `oracle` (too costly as a standing
-default — `burnrate` would decline it late in a grant), not bare assertion. It
-preserves *contested* and *negative* as first-class results, which §14 requires.
+> ⚠️ **`concordant` is a placeholder, not a considered default.** It is currently
+> the *only* standard the system has, because the machinery that would choose
+> among standards does not exist yet: `burnrate` (M2) is what modulates the
+> default up early in a grant and down late, and §15 fork #4 — *how* the
+> per-question standard is determined (prompt vs archetype vs adjudicated, and how
+> question-stakes combine with grant-burn) — is explicitly open. The value will be
+> revisited once burnrate lands; don't build on it as settled policy. Tracked in
+> [issue #4](https://github.com/scttfrdmn/telos/issues/4)'s discussion and §15 #4.
 
-**Open fork, not decided here:** *how* the per-question standard is determined
-(prompt vs archetype vs adjudicated, and how question-stakes combine with
-grant-burn) is architecture §15 #4. The seed only fixes the floor the recursion
-bottoms out on; `burnrate` (M2) modulates it.
+`concordant` is a *reasonable* provisional floor — not `oracle` (too costly as a
+standing default — `burnrate` would decline it late in a grant), not bare
+assertion, and it preserves *contested* and *negative* as first-class results
+(which §14 requires). But "reasonable provisional floor" is the claim, not
+"chosen default."
 
 ## The keystone seam — acceptance in a separate envelope (invariant 10)
 

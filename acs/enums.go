@@ -172,9 +172,12 @@ func (t Tier) valid() bool {
 // (oracle-verified / concordant-under-test / contested) is a separate axis — the
 // label of HOW it was established, not WHICH way it went.
 //
-// bootstrap.acs fixes the system DEFAULT here (StandardConcordant). Note: how the
-// per-question standard is *determined* (prompt vs archetype vs adjudicated) is
-// an open fork (architecture §15 #4) and is NOT decided by this default.
+// PLACEHOLDER, not settled policy: bootstrap.acs currently fixes StandardConcordant
+// as the seed default, but that is provisional pending burnrate (M2) and the
+// resolution of §15 fork #4 (how the per-question standard is *determined* —
+// prompt vs archetype vs adjudicated, and how question-stakes combine with
+// grant-burn). It reads as "the one standard we have until burnrate exists," not
+// a considered choice of default. Do not treat the value as decided.
 type StandardOfProof string
 
 const (

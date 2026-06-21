@@ -94,7 +94,7 @@ literature-search tool.
 | **burnrate** | reservoir-over-clock controller; modulates default standard of proof | new | `telos/burnrate` |
 | **placer** | bound node → transport + substrate | new (truffle rungs + governor) | `telos/placer` |
 | **acceptance** | disinterested verdict node, separate trust + budget envelope | new (hard seam; policy open) | `telos/acceptance` |
-| **cohort** | reconcile the named set across substrates | existing | `spore-host/cohort` |
+| **cohort** | reconcile the named set across substrates | to be extracted (not yet published; placeholder in `substrate/inproc` until M4 — telos#12) | `spore-host/cohort` |
 | **host** | generic agenkit-go runtime on the AgentCore contract | new | `telos/host` |
 | **substrate/inproc** | goroutine supervisor adapter | new | `telos/substrate/inproc` |
 | **substrate/agentcore** | AgentCore Actuator + Observer | new | `telos/substrate/agentcore` |
@@ -102,7 +102,13 @@ literature-search tool.
 | **attest** | provenance + reproducibility for emitted claims | provabl/attest/Copland | existing |
 | **ledger** | distributed conservation + WAL + surplus + neutral pool | new (in governor) | `telos/ledger` |
 
-Imports `scttfrdmn/agenkit` and `spore-host/cohort` as libraries. Go 1.26,
+Imports agenkit and `spore-host/cohort` as libraries. The agenkit Go module is
+`github.com/scttfrdmn/agenkit-go` (a distribution mirror; module at repo root) —
+the canonical monorepo path `github.com/scttfrdmn/agenkit/agenkit-go` is not
+`go get`-able because committed binaries exceed Go's 500 MB zip ceiling
+(scttfrdmn/agenkit#660). Swap back to the canonical path once cleaned (telos#13).
+`spore-host/cohort` is **not yet published** — it must be extracted before M4
+(telos#12); `substrate/inproc` runs on a local placeholder until then. Go 1.26,
 Apache 2.0. State in GitHub Issues / Projects / Milestones.
 
 ---
