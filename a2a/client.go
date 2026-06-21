@@ -105,6 +105,40 @@ func CrossBoundary(
 	return resp, nil
 }
 
+// §15 fork #9 — RESOLVED PER-PATH (M5), not globally:
+//
+//   - HAPPY PATH (CrossBoundary, above): SYNCHRONOUS. The parent blocks, the
+//     child returns, settlement is applied inline. This is M4's model, kept —
+//     we do NOT pay async latency on every call for the sake of a rare replay.
+//
+//   - RECOVERY PATH (SettleRemoteEventually, below): EVENTUAL. A settlement that
+//     arrives out-of-order, late, or after the parent is being rebuilt from the
+//     WAL has nowhere to go in a pure-sync model — so it settles eventually
+//     against the replayed parent. It converges on the SAME idempotent governor
+//     apply (settle-by-GrantID), so it can never double-count.
+//
+// Conflating the two — making every call eventual — would tax the common path to
+// handle the rare one. The split IS the resolution: happy=sync, recovery=eventual.
+
+// SettleRemoteEventually is the RECOVERY-path settle (§9 / fork #9 eventual side).
+// It applies a settlement that could not be settled synchronously — because the
+// parent had crashed and was rebuilt from the WAL, or the settlement arrived late
+// or out of order — to the child grant identified by gid, against a parent
+// governor that may have just been replayed. It is idempotent (governor settle is
+// a no-op on an already-closed grant), so a settlement that was in fact already
+// applied before the crash leaves the ledger unchanged.
+//
+// The grant must exist in the (replayed) governor as an OPEN escrow — which it
+// will, because CrossBoundary write-ahead-journals the reservation BEFORE
+// invoking the remote, so the escrow survives a parent crash (#A1).
+func SettleRemoteEventually(ctx context.Context, gov governor.Governor, gid governor.GrantID, s Settlement) error {
+	outcome := governor.Outcome{Exit: exitKind(s.Outcome), Accepted: s.Accepted}
+	if err := gov.Settle(ctx, gid, s.Cost(), outcome); err != nil {
+		return fmt.Errorf("a2a: eventual settle of %q: %w", gid, err)
+	}
+	return nil
+}
+
 func exitKind(s string) governor.ExitKind {
 	switch governor.ExitKind(s) {
 	case governor.ExitDone, governor.ExitHandoff, governor.ExitNegative, governor.ExitExhausted:

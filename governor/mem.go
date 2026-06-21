@@ -18,10 +18,23 @@ import (
 // It is safe for concurrent use: the gateway's metered loop runs under the
 // goroutine fan-out of the agenkit patterns, so Reserve/Settle race.
 type Mem struct {
-	mu     sync.Mutex
-	grants map[GrantID]*grantState
-	nextID uint64
-	wal    *wal // nil for an in-memory-only governor (no durability)
+	mu        sync.Mutex
+	grants    map[GrantID]*grantState
+	nextID    uint64
+	wal       *wal        // nil for an in-memory-only governor (no durability)
+	sink      SurplusSink // nil if no live surplus consumer; notified on settle/fault (#D1)
+	replaying bool        // true during WAL replay — suppresses live sink pushes
+}
+
+// WithSink registers a live surplus-signal consumer (planner/burnrate). It is
+// notified as grants settle. Pushes are SUPPRESSED during WAL replay — replay
+// reconstructs the ledger state, and re-pushing historical signals would
+// double-count realized burn at the consumer. Returns m for chaining.
+func (m *Mem) WithSink(sink SurplusSink) *Mem {
+	m.mu.Lock()
+	m.sink = sink
+	m.mu.Unlock()
+	return m
 }
 
 type grantState struct {
@@ -42,7 +55,14 @@ type grantState struct {
 	// from the conservation flow (unspent escrow is always released); this is the
 	// rewarded margin that funds the next question (architecture §9).
 	bankedSurplus float64
-	closed        bool // settled or released
+	// cause/exit/accepted record the settle disposition for the surplus signal
+	// (#D1) and legible reconstruction on replay. Set once, at settlement.
+	cause    string
+	exit     ExitKind
+	accepted bool
+	// fault, if set, is this grant's fault disposition (#C1) — durable + replayable.
+	fault  *FaultDisposition
+	closed bool // settled or released
 }
 
 // New returns a conservation-only governor seeded with a root grant equal to the
@@ -149,11 +169,19 @@ func (m *Mem) settleLocked(id GrantID, actual acs.Cost, outcome Outcome, wal boo
 	if !ok {
 		return fmt.Errorf("governor: grant %q does not exist", id)
 	}
-	if g.closed {
-		return fmt.Errorf("governor: grant %q already closed", id)
-	}
 	if id == RootGrant {
 		return fmt.Errorf("governor: cannot settle the root grant")
+	}
+	// IDEMPOTENT BY GRANT ID (M5 #I1): a grant settles exactly once. Settling an
+	// already-closed grant — a live double-settle, a late settlement, or a WAL
+	// replay of an already-applied settle — is a NO-OP, not an error and not a
+	// re-apply. The first disposition wins; the ledger is left unchanged. The
+	// closed-check is BEFORE journaling, so a no-op never appends to the WAL
+	// (replay stays bounded and a re-settle can't grow the log). This is the trap
+	// that silently corrupts a crash-recovery budget system if gotten wrong:
+	// without it, replay double-debits the reservoir and double-banks surplus.
+	if g.closed {
+		return nil
 	}
 	if cur := g.reservoir.Denomination(); actual.Denomination() != cur {
 		return fmt.Errorf("governor: settle currency %s != grant currency %s", actual.Denomination(), cur)
@@ -161,7 +189,7 @@ func (m *Mem) settleLocked(id GrantID, actual acs.Cost, outcome Outcome, wal boo
 
 	if wal {
 		if err := m.journal(walRecord{Op: opSettle, ID: id, Amount: actual.Amount,
-			Synthesized: actual.Synthesized, Accepted: outcome.Accepted}); err != nil {
+			Synthesized: actual.Synthesized, Accepted: outcome.Accepted, Cause: outcome.Cause}); err != nil {
 			return err
 		}
 	}
@@ -187,8 +215,31 @@ func (m *Mem) settleLocked(id GrantID, actual acs.Cost, outcome Outcome, wal boo
 		g.bankedSurplus = 0
 	}
 
+	// Record the settle disposition for the surplus signal (#D1) and for legible
+	// reconstruction on replay. cause/exit/accepted are reconstructed identically
+	// by replay (the gate result, never re-evaluated unconditionally).
+	g.cause = outcome.Cause
+	g.exit = outcome.Exit
+	g.accepted = outcome.Accepted
+
 	g.closed = true
+	m.notify(g)
 	return nil
+}
+
+// notify pushes a settled grant's disposition to the live surplus sink (#D1).
+// Suppressed during replay: replay reconstructs ledger state, and re-emitting
+// historical signals would double-count realized burn at the consumer. Caller
+// holds m.mu; the sink must not call back into the governor (would deadlock).
+func (m *Mem) notify(g *grantState) {
+	if m.sink == nil || m.replaying {
+		return
+	}
+	m.sink.OnSettled(Signal{
+		GrantID: g.id, Exit: g.exit, Accepted: g.accepted,
+		Surplus: g.bankedSurplus, Spent: g.spent, Synthesized: g.synthesized,
+		Cause: g.cause, Fault: g.fault,
+	})
 }
 
 // Release closes a grant with no charge, returning its full reservation to the
@@ -209,11 +260,14 @@ func (m *Mem) releaseLocked(id GrantID, wal bool) error {
 	if !ok {
 		return fmt.Errorf("governor: grant %q does not exist", id)
 	}
-	if g.closed {
-		return fmt.Errorf("governor: grant %q already closed", id)
-	}
 	if id == RootGrant {
 		return fmt.Errorf("governor: cannot release the root grant")
+	}
+	// Idempotent by GrantID (#I1): releasing an already-closed grant — including a
+	// replay of an applied release — is a no-op. First disposition wins (a grant
+	// that was settled is not later "released"; a released grant is not re-released).
+	if g.closed {
+		return nil
 	}
 	if wal {
 		if err := m.journal(walRecord{Op: opRelease, ID: id}); err != nil {

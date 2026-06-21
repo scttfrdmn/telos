@@ -31,6 +31,7 @@ const (
 	opReserve walOp = "reserve" // escrow a child against a parent
 	opSettle  walOp = "settle"  // settle actual + bank surplus iff accepted
 	opRelease walOp = "release" // release escrow with no charge
+	opFault   walOp = "fault"   // a fault disposition for an entity/session (#C1)
 )
 
 // walRecord is one journaled mutation. Fields are populated per op; absent ones
@@ -47,9 +48,19 @@ type walRecord struct {
 	Amount float64       `json:"amount,omitempty"`
 	Period time.Duration `json:"period,omitempty"`
 
-	// Settle: actual cost (Amount above) + its modeled portion + acceptance.
-	Synthesized float64 `json:"synthesized,omitempty"`
-	Accepted    bool    `json:"accepted,omitempty"`
+	// Settle: actual cost (Amount above) + its modeled portion + the disposition
+	// (acceptance/exit/cause) so replay reconstructs the surplus gate's RESULT and
+	// the surplus signal (#D1) — never re-evaluating the gate unconditionally.
+	Synthesized float64  `json:"synthesized,omitempty"`
+	Accepted    bool     `json:"accepted,omitempty"`
+	Exit        ExitKind `json:"exit,omitempty"`
+	Cause       string   `json:"cause,omitempty"`
+
+	// Fault (opFault): a session/entity fault disposition, journaled so a fault
+	// recorded before a crash is reproduced legibly on replay (#C1).
+	FaultClass string `json:"fault_class,omitempty"`
+	FaultCode  string `json:"fault_code,omitempty"`
+	FaultMsg   string `json:"fault_msg,omitempty"`
 }
 
 // wal is the append-only journal handle.
@@ -132,6 +143,10 @@ func (m *Mem) Close() error {
 // via the same *Locked helpers the live path uses (with wal=false so replay is
 // not re-journaled), and stops at the first torn/undecodable trailing record.
 func (m *Mem) replay(f *os.File) error {
+	// Replay reconstructs state; suppress live surplus-signal pushes during it
+	// (re-emitting historical signals would double-count realized burn — #D1).
+	m.replaying = true
+	defer func() { m.replaying = false }()
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		return fmt.Errorf("governor: wal rewind: %w", err)
 	}
@@ -174,11 +189,20 @@ func (m *Mem) applyRecord(rec walRecord) error {
 		m.bumpNextID(rec.ID)
 		return nil
 	case opSettle:
-		cur := m.grants[rec.ID].reservoir.Denomination()
+		g, ok := m.grants[rec.ID]
+		if !ok {
+			return fmt.Errorf("settle for absent grant %q", rec.ID)
+		}
+		cur := g.reservoir.Denomination()
+		// Replay reconstructs the disposition (Accepted/Exit/Cause) recorded at
+		// settle time — the surplus gate's RESULT, never re-evaluated. settleLocked
+		// is idempotent, so replaying an applied settle is a no-op.
 		return m.settleLocked(rec.ID, acs.Cost{Amount: rec.Amount, Synthesized: rec.Synthesized, Currency: cur},
-			Outcome{Accepted: rec.Accepted}, false)
+			Outcome{Accepted: rec.Accepted, Exit: rec.Exit, Cause: rec.Cause}, false)
 	case opRelease:
 		return m.releaseLocked(rec.ID, false)
+	case opFault:
+		return m.applyFaultLocked(rec, false)
 	default:
 		return fmt.Errorf("unknown wal op %q", rec.Op)
 	}

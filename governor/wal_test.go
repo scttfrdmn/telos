@@ -64,9 +64,18 @@ func TestWAL_SurvivesKillAndRestart(t *testing.T) {
 	if err := g2.Settle(ctx, GrantID(gb.GrantID), cost(5), Outcome{Exit: ExitDone, Accepted: true}); err != nil {
 		t.Fatalf("settle replayed-open grant: %v", err)
 	}
-	// ga is closed: re-settling must fail (no double-spend).
-	if err := g2.Settle(ctx, GrantID(ga.GrantID), cost(1), Outcome{Accepted: true}); err == nil {
-		t.Fatal("re-settling an already-settled grant must fail (no double-spend after replay)")
+	// ga is closed: re-settling is now an idempotent NO-OP (M5 #I1), not an error.
+	// It must leave the ledger UNCHANGED — no double-debit, no double-bank.
+	remBefore := g2.Remaining(RootGrant).Amount
+	surBefore := g2.BankedSurplus(GrantID(ga.GrantID))
+	if err := g2.Settle(ctx, GrantID(ga.GrantID), cost(1), Outcome{Accepted: true}); err != nil {
+		t.Fatalf("re-settling a closed grant must be an idempotent no-op, got error: %v", err)
+	}
+	if g2.Remaining(RootGrant).Amount != remBefore {
+		t.Fatal("re-settle double-debited the reservoir (idempotency broken)")
+	}
+	if g2.BankedSurplus(GrantID(ga.GrantID)) != surBefore {
+		t.Fatal("re-settle changed banked surplus (idempotency broken)")
 	}
 }
 
