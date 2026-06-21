@@ -120,7 +120,7 @@ func NewDeps(ctx context.Context, cfg DepsConfig, log *slog.Logger) (*Deps, erro
 		return nil, err
 	}
 
-	return &Deps{Gateway: gw, Router: rtr}, nil
+	return &Deps{Gateway: gw, Router: rtr, Governor: gov, LiveAcceptance: true}, nil
 }
 
 // defaultBedrockRates seeds a few well-known Bedrock model rates ($/M tokens).

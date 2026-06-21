@@ -43,10 +43,11 @@ type Spec struct {
 	// uses ArchetypeNone.
 	Archetype Archetype `json:"archetype"`
 
-	// Standard is the run's DEFAULT standard of proof — the bar a result clears
-	// to be accepted, before burnrate modulates it. bootstrap.acs fixes the
-	// system default here. A node may override it (the scoping pass runs at
-	// StandardScoping). Empty means StandardConcordant (the seeded default).
+	// Standard is the seed's FALLBACK standard of proof — used only when burn-rate
+	// has no reservoir-over-clock signal (see ResolveStandard). As of M2 burn-rate
+	// is the source of the run default; this seed value is the recursion's
+	// fallback, and a node may still override it (the scoping pass runs at
+	// StandardScoping). Empty means StandardConcordant.
 	Standard StandardOfProof `json:"standard,omitempty"`
 
 	// RootID is the entry node — the agent the host invokes.

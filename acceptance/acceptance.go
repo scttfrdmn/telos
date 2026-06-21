@@ -11,10 +11,18 @@
 // builders from touching acceptance nodes — production code cannot reach in and
 // self-render a verdict.
 //
-// M0 builds the SEAM, not the policy. The acceptance node here is INERT: it
-// renders no verdict (NewInertNode). The courtroom (advocates, tiers, bonds —
-// §12 direction) is deferred; the separation is pinned now because it is the part
-// that is unrecoverable later.
+// M2 builds SUMMARY JUDGMENT: the node renders real, labeled verdicts (see
+// judge.go / NewSummaryJudge). The courtroom (advocates, tiers, bonds — §12
+// "direction") is still deferred; M2 only grades direction-neutral facts about a
+// record (its provenance exists and is consistent), never a bare "true." The M0
+// inert node (NewInertNode) is retained for composition-only / offline paths.
+//
+// RUNTIME ENVELOPE SEPARATION (invariant 10, extended from M0's package boundary):
+// the verdict path takes only a Record (the result to judge) and a standard — it
+// has NO handle to the producer's grant, reservoir, or budget context, so it
+// cannot be swayed by how much budget the producer has. The producing node never
+// settles its own acceptance; the package contains no production code (guarded by
+// the import test in seam_test.go).
 package acceptance
 
 import (
@@ -52,15 +60,59 @@ type Verdict struct {
 }
 
 // Record is the production output an acceptance node judges. It is opaque to this
-// package by design — acceptance grades direction-neutral facts about a record,
-// it does not re-produce or re-reason the content.
+// package by design — acceptance grades direction-neutral FACTS about a record
+// (does it carry provenance; do its sources concur; does it reproduce), it does
+// not re-produce or re-reason the content. Crucially it carries NO budget/grant
+// context: the verdict path cannot see the producer's reservoir (invariant 10).
 type Record struct {
 	// NodeID is the producing node whose record this is.
 	NodeID string
-	// Content is the rendered result text (by value here in M0; by reference in
-	// later milestones).
+
+	// Content is the rendered result text (by value here; by reference later).
 	Content string
+
+	// Direction is which way the result points — Positive, Negative, or
+	// Inconclusive. It is recorded ONLY so the judge can be shown to treat
+	// directions neutrally; it must NOT affect whether the record is accepted.
+	Direction Direction
+
+	// Sources are the citations/evidence backing the claim. A record with NO
+	// sources is unprovenanced and FAILS acceptance (architecture §4).
+	Sources []Source
+
+	// Reproduced reports that a computation in the record reproduced under test
+	// (an oracle check). When true the verdict can reach OracleVerified.
+	Reproduced bool
+
+	// SelfContested marks a record the producer itself flagged as genuinely
+	// contested (conflicting evidence). An accepted contested record is a
+	// first-class result, not a failure (architecture §10/§14).
+	SelfContested bool
 }
+
+// Source is one piece of provenance backing a record. Concordance is judged on
+// how many INDEPENDENT, on-point sources support the claim.
+type Source struct {
+	// ID is a citation / dataset / attestation identifier.
+	ID string
+	// Independent marks a source methodologically independent of the others
+	// (different method/lab/model) — concordance among independent sources is
+	// worth more than agreement among dependent ones (architecture §12).
+	Independent bool
+	// Supports reports whether this source supports (true) or disputes (false)
+	// the record's direction. Disputing sources push toward Contested.
+	Supports bool
+}
+
+// Direction is which way a result points. Acceptance is direction-NEUTRAL: a
+// well-supported Negative is accepted exactly like a well-supported Positive.
+type Direction string
+
+const (
+	DirectionPositive     Direction = "positive"
+	DirectionNegative     Direction = "negative"
+	DirectionInconclusive Direction = "inconclusive"
+)
 
 // StandardOfProof is the bar a record must clear. It is a string alias rather
 // than an import of acs to keep this package free of any production dependency

@@ -10,6 +10,7 @@ import (
 	"github.com/scttfrdmn/telos/acceptance"
 	"github.com/scttfrdmn/telos/acs"
 	"github.com/scttfrdmn/telos/gateway"
+	"github.com/scttfrdmn/telos/governor"
 	"github.com/scttfrdmn/telos/router"
 )
 
@@ -20,6 +21,13 @@ import (
 type Deps struct {
 	Gateway gateway.Gateway
 	Router  router.Router
+	// Governor conserves the run grant and settles spend; surplus banks through it
+	// iff the acceptance verdict accepts (lexicographic — §9).
+	Governor governor.Governor
+	// LiveAcceptance builds acceptance nodes as live summary-judgment renderers
+	// (M2) rather than the inert M0 node. The node still runs in its own envelope
+	// and is built only via the acceptance package (invariant 10).
+	LiveAcceptance bool
 }
 
 // BuildWithDeps instantiates a spec, wiring Deps into leaf agents that can use
@@ -85,9 +93,15 @@ func (b *builder) node(id acs.NodeID) (agenkit.Agent, error) {
 
 // dispatch routes a node to the correct constructor. Acceptance is intercepted
 // FIRST, before any producer path, so an acceptance node can never be built as a
-// producer regardless of the pattern it declares (invariant 10).
+// producer regardless of the pattern it declares (invariant 10). With deps wired,
+// the acceptance node renders LIVE verdicts (summary judgment); otherwise it is
+// the inert M0 node. Either way it is built ONLY via the acceptance package —
+// never a producer builder — and runs in its own envelope.
 func (b *builder) dispatch(n *acs.Node) (agenkit.Agent, error) {
 	if n.Kind == acs.KindAcceptance {
+		if b.deps != nil && b.deps.LiveAcceptance {
+			return acceptance.NewSummaryJudge(string(n.ID)), nil
+		}
 		return acceptance.NewInertNode(string(n.ID)), nil
 	}
 

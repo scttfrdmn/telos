@@ -55,6 +55,21 @@ for n in g["nodes"]:
         sys.exit("acceptance node shares producer envelope (invariant 10)")
 ' || fail "acceptance envelope check failed"
 
+# M2: the acceptance node renders a LIVE labeled verdict (not the inert marker).
+# With stub producers attaching no provenance, an honest verdict is "not accepted"
+# on unprovenanced grounds — which is exactly correct (§4). We assert a real basis
+# is present (not the M0 "not-adjudicated-in-M0" inert marker).
+echo "$INV" | python3 -c '
+import sys, json
+md = json.load(sys.stdin).get("metadata", {})
+basis = md.get("telos.basis")
+if basis is None:
+    sys.exit("no verdict basis surfaced — acceptance not rendering")
+if basis == "not-adjudicated-in-m0" or "telos.accepted" not in md:
+    sys.exit("acceptance not rendering a live verdict (telos.accepted missing)")
+' || fail "live acceptance verdict not surfaced"
+
 echo ""
 echo "PASS: /ping healthy; /invocations instantiated the 10-node seed graph"
-echo "      (sequential+react+supervisor+parallel + separate-envelope acceptance)."
+echo "      (sequential+react+supervisor+parallel + separate-envelope acceptance),"
+echo "      and the acceptance node rendered a live labeled verdict."
