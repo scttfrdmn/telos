@@ -10,6 +10,7 @@ import (
 	"github.com/scttfrdmn/telos/acs"
 	"github.com/scttfrdmn/telos/gateway"
 	"github.com/scttfrdmn/telos/governor"
+	"github.com/scttfrdmn/telos/planner"
 	"github.com/scttfrdmn/telos/router"
 )
 
@@ -17,6 +18,16 @@ import (
 // amount with no period. A grant is amount-over-period (invariant 4); this keeps
 // a missing clock from collapsing the grant into a bare total.
 func defaultEnvelopePeriod() time.Duration { return 24 * time.Hour }
+
+// runClock returns the grant clock for the current run's burn-rate signal. M2/M3
+// run a single invocation against a fresh grant, so elapsed is ~0 (the whole
+// period is ahead) — burn-rate then affords its higher default standard, which is
+// the honest signal for a fresh grant. Tracking real elapsed time across a grant
+// (so the standard steps down late) is a later refinement; the SEAM (a clock fed
+// to burn-rate) is here now.
+func (d *Deps) runClock() governor.Clock {
+	return governor.Clock{Elapsed: 0, Total: d.envelopePeriod}
+}
 
 // DepsConfig describes which model backends to wire behind the gateway. Any
 // combination may be enabled; if NONE are, the gateway falls back to an offline
@@ -120,7 +131,14 @@ func NewDeps(ctx context.Context, cfg DepsConfig, log *slog.Logger) (*Deps, erro
 		return nil, err
 	}
 
-	return &Deps{Gateway: gw, Router: rtr, Governor: gov, LiveAcceptance: true}, nil
+	return &Deps{
+		Gateway:        gw,
+		Router:         rtr,
+		Governor:       gov,
+		Planner:        planner.New(),
+		LiveAcceptance: true,
+		envelopePeriod: cfg.Envelope.Period,
+	}, nil
 }
 
 // defaultBedrockRates seeds a few well-known Bedrock model rates ($/M tokens).

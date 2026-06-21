@@ -137,11 +137,36 @@ func (j *summaryJudge) Process(ctx context.Context, message *agenkit.Message) (*
 		return nil, err
 	}
 	out := agenkit.NewMessage("agent", fmt.Sprintf("[acceptance: %s — %s] %s", verdictWord(v), v.Basis, v.Note))
+	// Carry forward upstream audit metadata (scoping, for/against record, etc.) so
+	// the run's auditable trail survives to the response. The judge does NOT read
+	// these to decide — its verdict depends only on (record, standard) — it merely
+	// preserves them for observability (§14 auditability).
+	carryAudit(message, out)
 	out.WithMetadata("telos.kind", "acceptance")
 	out.WithMetadata("telos.accepted", v.Accepted)
 	out.WithMetadata("telos.basis", string(v.Basis))
 	out.WithMetadata("telos.note", v.Note)
 	return out, nil
+}
+
+// auditKeys are upstream telos.* metadata the judge preserves for observability
+// (it does not read them to decide a verdict).
+var auditKeys = []string{
+	"telos.archetype", "telos.scoping", "telos.forAgainst",
+	"telos.reconciled_direction", "telos.contested", "telos.standard",
+}
+
+// carryAudit copies audit-trail metadata from in to out without letting it touch
+// the verdict (which is rendered solely from the record + standard).
+func carryAudit(in, out *agenkit.Message) {
+	if in == nil || in.Metadata == nil {
+		return
+	}
+	for _, k := range auditKeys {
+		if v, ok := in.Metadata[k]; ok {
+			out.WithMetadata(k, v)
+		}
+	}
 }
 
 func verdictWord(v Verdict) string {

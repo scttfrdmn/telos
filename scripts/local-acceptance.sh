@@ -34,42 +34,52 @@ PING="$(curl -fsS "${BASE}/ping")"
 echo "$PING" | grep -q '"status":"healthy"' || fail "ping not healthy: $PING"
 echo "$PING" | grep -q '"seed_hash":"sha256:' || fail "ping missing seed hash: $PING"
 
-echo "==> POST /invocations"
+# M3: the seed is a planning-root base case that CLOSES THE RECURSION — it reads
+# the question, the planner emits a real graph, and the host re-instantiates it.
+# We exercise the §14 STRUCTURE offline on echo (the real-model QUALITY is the
+# creds-gated live gate, TestSmoke_TREM2_Section14). The TREM2 string is used so
+# scoping has real entities to bound.
+echo "==> POST /invocations (TREM2 — closes the recursion)"
 INV="$(curl -fsS -X POST "${BASE}/invocations" \
   -H 'content-type: application/json' \
-  -d '{"prompt":"does X modulate Y, and what is the evidence?"}')"
+  -d '{"prompt":"does microglial TREM2 signaling modulate tau propagation in the entorhinal cortex, and what'"'"'s the current evidence?"}')"
 
-echo "$INV" | grep -q '"root_id":"root"'        || fail "graph root not instantiated: $INV"
-echo "$INV" | grep -q '"node_count":10'         || fail "seed graph not fully instantiated: $INV"
-echo "$INV" | grep -q '"standard":"concordant"' || fail "seeded default standard missing: $INV"
-for pat in sequential parallel supervisor react; do
-  echo "$INV" | grep -q "\"pattern\":\"$pat\"" || fail "pattern $pat not instantiated"
-done
-# Acceptance present and in a separate envelope (invariant 10).
-echo "$INV" | grep -q '"kind":"acceptance"'                || fail "acceptance node absent"
+# The seed itself is the minimal planning base case (1 node).
+echo "$INV" | grep -q '"node_count":1' || fail "seed should be the 1-node planning base case: $INV"
+
 echo "$INV" | python3 -c '
 import sys, json
-g = json.load(sys.stdin)["graph"]
-for n in g["nodes"]:
-    if n["kind"] == "acceptance" and n["trust"] == "same-envelope":
-        sys.exit("acceptance node shares producer envelope (invariant 10)")
-' || fail "acceptance envelope check failed"
+r = json.load(sys.stdin)
+md = r.get("metadata", {})
 
-# M2: the acceptance node renders a LIVE labeled verdict (not the inert marker).
-# With stub producers attaching no provenance, an honest verdict is "not accepted"
-# on unprovenanced grounds — which is exactly correct (§4). We assert a real basis
-# is present (not the M0 "not-adjudicated-in-M0" inert marker).
-echo "$INV" | python3 -c '
-import sys, json
-md = json.load(sys.stdin).get("metadata", {})
-basis = md.get("telos.basis")
-if basis is None:
-    sys.exit("no verdict basis surfaced — acceptance not rendering")
-if basis == "not-adjudicated-in-m0" or "telos.accepted" not in md:
-    sys.exit("acceptance not rendering a live verdict (telos.accepted missing)")
-' || fail "live acceptance verdict not surfaced"
+# §14 #1 — recursion closed to a two-phase COMPOSITE graph.
+if r.get("archetype") != "composite":
+    sys.exit("§14 #1: archetype = %r, want composite" % r.get("archetype"))
+
+# §14 #2 — scoping bounded between flatten and explode, inspectable.
+sc = md.get("telos.scoping")
+if not sc:
+    sys.exit("§14 #2: scoping not surfaced")
+n = len(sc.get("Entities", []))
+if not (sc["MinEntities"] <= n <= sc["MaxEntities"]):
+    sys.exit("§14 #2: %d entities outside [%d,%d] (flatten/explode)" % (n, sc["MinEntities"], sc["MaxEntities"]))
+
+# §14 #3 — earned contested: assembled from BOTH directions, inspectable.
+fa = md.get("telos.forAgainst", "")
+if "evidence_for" not in fa or "evidence_against" not in fa:
+    sys.exit("§14 #3: for/against not assembled from both sides: %r" % fa)
+if r.get("basis") != "contested":
+    sys.exit("§14 #3: basis = %r, want contested" % r.get("basis"))
+
+# §14 #4 — a provenanced contested result is ACCEPTED (banks surplus).
+if not r.get("accepted"):
+    sys.exit("§14 #4: a provenanced contested result must be accepted")
+
+print("  §14 #1 composite | #2 scope=%d in [%d,%d] | #3 earned-contested | #4 accepted" % (
+    n, sc["MinEntities"], sc["MaxEntities"]))
+' || fail "§14 structure check failed"
 
 echo ""
-echo "PASS: /ping healthy; /invocations instantiated the 10-node seed graph"
-echo "      (sequential+react+supervisor+parallel + separate-envelope acceptance),"
-echo "      and the acceptance node rendered a live labeled verdict."
+echo "PASS: /ping healthy; the planning-root seed CLOSED THE RECURSION on the TREM2"
+echo "      question (offline/echo): composite graph → scoped → earned-contested →"
+echo "      accepted. Real-model quality is the creds-gated live gate."

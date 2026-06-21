@@ -1,207 +1,27 @@
 {
   "version": "v0.1",
-  "hash": "sha256:792c366c24818756d7ad992333b0c6bfacd0176c62af2d431ec3f4c90fcfd796",
+  "hash": "sha256:6db0a6a05db6251169c4cc45e72258d7569b2702ca41e692c5b845f18632d59f",
   "prompt": "(* seed *) Investigate the question, honestly, within the grant.",
   "archetype": "none",
   "standard": "concordant",
   "root_id": "root",
   "nodes": {
-    "accept": {
-      "id": "accept",
-      "kind": "acceptance",
-      "pattern": "leaf",
-      "role": "Disinterested acceptance: render a labeled verdict (oracle-verified / concordant-under-test / contested) on the run record, in a separate envelope. Renders no verdict in M0.",
-      "model": {},
-      "budget": {
-        "amount": 10,
-        "period": 86400000000000
-      },
-      "trust": "isolated"
-    },
-    "extract": {
-      "id": "extract",
-      "kind": "reason",
-      "pattern": "parallel",
-      "role": "Extract claims and evidence from each retrieved source, independently.",
-      "model": {
-        "tier": "cheap"
-      },
-      "budget": {
-        "amount": 30,
-        "period": 86400000000000
-      },
-      "trust": "same-envelope",
-      "children": [
-        "extract_a",
-        "extract_b"
-      ]
-    },
-    "extract_a": {
-      "id": "extract_a",
-      "kind": "reason",
-      "pattern": "leaf",
-      "role": "Extraction worker (source partition A).",
-      "model": {
-        "tier": "cheap"
-      },
-      "budget": {
-        "amount": 15,
-        "period": 86400000000000
-      },
-      "trust": "same-envelope"
-    },
-    "extract_b": {
-      "id": "extract_b",
-      "kind": "reason",
-      "pattern": "leaf",
-      "role": "Extraction worker (source partition B).",
-      "model": {
-        "tier": "cheap"
-      },
-      "budget": {
-        "amount": 15,
-        "period": 86400000000000
-      },
-      "trust": "same-envelope"
-    },
-    "inquiry": {
-      "id": "inquiry",
-      "kind": "reason",
-      "pattern": "supervisor",
-      "role": "Evidence-synthesis head: decompose, delegate retrieval and extraction, synthesize a consolidated finding.",
-      "model": {
-        "tier": "mid"
-      },
-      "budget": {
-        "amount": 70,
-        "period": 86400000000000
-      },
-      "trust": "same-envelope",
-      "children": [
-        "retrieve",
-        "extract",
-        "synthesize"
-      ]
-    },
-    "reconcile": {
-      "id": "reconcile",
-      "kind": "reconcile",
-      "pattern": "leaf",
-      "role": "Reconcile the consolidated finding into a result; preserve contested / stage-dependent rather than forcing a verdict.",
-      "model": {
-        "tier": "mid"
-      },
-      "budget": {
-        "amount": 15,
-        "period": 86400000000000
-      },
-      "trust": "same-envelope"
-    },
-    "retrieve": {
-      "id": "retrieve",
-      "kind": "retrieve",
-      "pattern": "leaf",
-      "role": "Retrieve candidate sources for the question.",
-      "tools": [
-        {
-          "name": "search"
-        },
-        {
-          "name": "fetch"
-        }
-      ],
-      "model": {},
-      "budget": {
-        "amount": 15,
-        "period": 86400000000000
-      },
-      "trust": "same-envelope"
-    },
     "root": {
       "id": "root",
       "kind": "plan",
-      "pattern": "sequential",
-      "role": "Planner-as-root: scope the question, conduct the inquiry, reconcile a result. Serves the telos; captures nothing.",
-      "model": {},
+      "pattern": "planning",
+      "role": "Investigate the question, honestly, within the grant.",
+      "model": {
+        "tier": "cheap"
+      },
       "budget": {
         "amount": 100,
         "period": 86400000000000
       },
       "trust": "same-envelope",
-      "replan": true,
-      "children": [
-        "scope",
-        "inquiry",
-        "reconcile",
-        "accept"
-      ]
-    },
-    "scope": {
-      "id": "scope",
-      "kind": "reason",
-      "pattern": "react",
-      "role": "Scoping pass: turn the question into a costed plan (archetype, shape, estimated envelope, implied standard of proof) before any worker spends.",
-      "tools": [
-        {
-          "name": "search"
-        }
-      ],
-      "model": {
-        "tier": "cheap"
-      },
-      "budget": {
-        "amount": 5,
-        "period": 86400000000000,
-        "max_fraction": 0.1
-      },
-      "trust": "same-envelope",
-      "standard": "scoping"
-    },
-    "synthesize": {
-      "id": "synthesize",
-      "kind": "reason",
-      "pattern": "leaf",
-      "role": "Synthesize extracted evidence into a consolidated finding with provenance.",
-      "model": {
-        "tier": "mid"
-      },
-      "budget": {
-        "amount": 20,
-        "period": 86400000000000
-      },
-      "trust": "same-envelope"
+      "replan": true
     }
   },
-  "edges": [
-    {
-      "from": "scope",
-      "to": "inquiry",
-      "kind": "dependency"
-    },
-    {
-      "from": "inquiry",
-      "to": "reconcile",
-      "kind": "dependency"
-    },
-    {
-      "from": "retrieve",
-      "to": "extract",
-      "kind": "dataflow",
-      "ref": "retrieve.sources"
-    },
-    {
-      "from": "extract",
-      "to": "synthesize",
-      "kind": "dataflow",
-      "ref": "extract.claims"
-    },
-    {
-      "from": "reconcile",
-      "to": "accept",
-      "kind": "dataflow",
-      "ref": "reconcile.record"
-    }
-  ],
   "budget": {
     "amount": 100,
     "period": 86400000000000,

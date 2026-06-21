@@ -1,96 +1,70 @@
 # `bootstrap.acs` — design note
 
-`bootstrap.acs` is the recursion's base case: the hand-authored seed the host
-instantiates *before any planner exists* (architecture invariant 3 — the planner
-is itself the root agent, bootstrapped from this seed). It is generated, never
-hand-edited: [`cmd/genbootstrap`](../cmd/genbootstrap/main.go) constructs the
-spec in Go, runs `acs.Validate`, and emits the self-hashed JSON.
+`bootstrap.acs` is the recursion's base case: the static seed the host
+instantiates *before any planner runs* (architecture invariant 3 — the planner is
+itself the root agent, bootstrapped from this seed). It is generated, never
+hand-edited: [`cmd/genbootstrap`](../cmd/genbootstrap/main.go) constructs it in
+Go, runs `acs.Validate`, and emits self-hashed JSON.
 
 ```sh
-go run ./cmd/genbootstrap > bootstrap.acs
+go run ./cmd/genbootstrap > bootstrap.acs   # or: make seed
 ```
 
-It looks like boilerplate. It is not — it silently fixes two system-wide defaults
-that every later run inherits unless something overrides them. That is why it
-gets explicit design rather than a stub (hand-off note).
+## M3 redesign: the seed is a *minimal planning root*, not a hand-wired graph
 
-## Default 1 — decomposition (how Telos thinks when nothing tells it how)
-
-The seed encodes the **evidence-synthesis** shape (architecture §10/§11) fronted
-by an **estimate-first** scoping pass (§3):
+Through M2 the seed was a hand-wired `scope→inquiry→reconcile→accept` graph. In
+M3 the recursion actually closes, so the seed became the **smallest possible base
+case**: a single **planning-root node** that, given a question, *emits* the real
+multi-node graph (the produce→judge→settle inquiry), which the host
+re-instantiates.
 
 ```
-root (Sequential, Plan, replan)        ← the planner-as-root spine
-├── scope      (React, Reason)         ← estimate-first: question → costed plan
-├── inquiry    (Supervisor, Reason)    ← the default decomposition
-│   ├── retrieve   (leaf, Retrieve)        source fan-out
-│   ├── extract    (Parallel, Reason)      independent per-source extraction
-│   │   ├── extract_a (leaf)
-│   │   └── extract_b (leaf)
-│   └── synthesize  (leaf, Reason)         consolidate with provenance
-├── reconcile  (leaf, Reconcile)       ← may return *contested*, not a forced yes/no
-└── accept     (leaf, Acceptance)      ← SEPARATE ENVELOPE — judges, never produces
+root  (KindPlan / PatternPlanning / replan:true)
+  → reads the question
+  → planner.Scope + Plan  →  a real acs.Spec  (the inquiry graph)
+  → host re-instantiates and runs it
 ```
 
-This is the shape the planner reaches for by default. Estimate-first ordering is
-load-bearing: the first deliverable of any question is the cost of answering it,
-so `scope` runs before any worker spends and is held to the trivial `scoping`
-standard so it can never itself become a real spend.
+The decomposition is **not** in the seed — it is the planner's output
+(`domain/research`). That is deliberate: **the seed fixes as little as possible so
+it cannot bias the inquiry toward one archetype.** A composite question
+("does X modulate Y, and what's the evidence") must be detected as composite at
+*runtime*; a seed that hand-wired one shape would flatten it (§14 #1 failure,
+upstream of any code).
 
-## Default 2 — standard of proof (how sure we need to be)
+## What the seed fixes — and only this
 
-The seed sets `standard: "concordant"` as a **placeholder default**:
+1. **The base case is a planning node.** `KindPlan` / `PatternPlanning` /
+   `replan:true`: read the question, plan, re-instantiate. Nothing about *which*
+   archetype — that is inferred per question.
 
-| Standard | Meaning |
-|---|---|
-| `scoping` | trivial bar — enough to produce a costed plan |
-| `plausible` | internally coherent, lightly sourced |
-| **`concordant`** | **placeholder default** — grounded in direction-neutral verifiable facts (cited sources exist and say what's claimed; computations reproduce) |
-| `oracle` | oracle-verified where an oracle exists (clinical-grade) |
+2. **A fallback standard of proof** (`concordant`), used **only** when burn-rate
+   has no reservoir-over-clock signal. As of M2, burn-rate is the *source* of the
+   default standard (a visible function of grant phase); the seed value is the
+   *fallback*. §15 fork #4 (how the per-question standard is *determined*) stays
+   open.
 
-> ⚠️ **`concordant` is a placeholder, not a considered default.** It is currently
-> the *only* standard the system has, because the machinery that would choose
-> among standards does not exist yet: `burnrate` (M2) is what modulates the
-> default up early in a grant and down late, and §15 fork #4 — *how* the
-> per-question standard is determined (prompt vs archetype vs adjudicated, and how
-> question-stakes combine with grant-burn) — is explicitly open. The value will be
-> revisited once burnrate lands; don't build on it as settled policy. Tracked in
-> [issue #4](https://github.com/scttfrdmn/telos/issues/4)'s discussion and §15 #4.
+3. **A grant slice** (`amount` + `period` — invariant 4, never a bare total) the
+   emitted graph conserves against. Nominal placeholder; a real run's quote
+   replaces it.
 
-`concordant` is a *reasonable* provisional floor — not `oracle` (too costly as a
-standing default — `burnrate` would decline it late in a grant), not bare
-assertion, and it preserves *contested* and *negative* as first-class results
-(which §14 requires). But "reasonable provisional floor" is the claim, not
-"chosen default."
+## What the seed does NOT fix
 
-## The keystone seam — acceptance in a separate envelope (invariant 10)
+- **The inquiry shape.** Emitted per question by the planner (composite /
+  mechanistic / evidence-synthesis), so composite detection and scoping land at
+  runtime, not in the seed.
+- **Acceptance placement.** Invariant 10 (acceptance in its own envelope) is the
+  *planner's* responsibility to emit correctly, and `acs.Validate` rejects any
+  emitted graph that violates it. The seam is enforced on *emission*, not just on
+  hand-authoring — a stronger guarantee.
 
-`accept` is a node of kind `acceptance` with `trust: "isolated"`, wired as a
-**sibling** of the production spine under the neutral `root` coordinator, and fed
-the reconciled record by a one-way dataflow edge (`reconcile → accept`).
+## How §14 rides on it
 
-- The root is a *neutral coordinator*, not a producer of the record — wiring
-  production and a separately-enveloped judge as siblings is the **correct**
-  invariant-10 shape, enforced by `acs.Validate`.
-- In **M0 the acceptance node is inert** (no verdict logic until M2). What must
-  be right *now* is the separation — it is unrecoverable later. The complementary
-  half (production code can never import acceptance to self-render) is enforced at
-  the package boundary, not the ACS (see issue #9).
-
-## Budget — a grant, never a total (invariant 4)
-
-Every budget in the seed is `{amount, period}` — a grant rate, not a bare total.
-The seed's grant ($100 over 24h) is a well-formed placeholder; a real run
-replaces it via the planner's scoping/quote pass. `acs.Budget.Validate` rejects a
-zero period precisely so a "total" can never enter the system.
-
-## Patterns exercised
-
-All four M0 patterns appear, each for a real reason (not to tick a box):
-
-| Pattern | Node | Why |
-|---|---|---|
-| Sequential | `root` | estimate-first ordering: scope → inquire → reconcile → accept |
-| React | `scope` | reason + cheap probes to produce a costed plan (tool-driven, bounded) |
-| Supervisor | `inquiry` | plan / delegate / synthesize — the evidence-synthesis default |
-| Parallel | `extract` | independent per-source extraction (the goroutine-rung fan-out) |
+On the TREM2 string the planning root emits a **two-phase composite** graph
+(evidence-synthesis substrate → mechanistic head), the scoping node bounds the
+entity expansion between flatten and explode (inspectable), the mechanistic head
+assembles for/against and the reconciliation returns an **earned, provenanced
+Contested**, and the separate-envelope acceptance node **accepts** it — banking
+surplus, with the lexicographic guard holding. The deterministic plumbing is
+proven offline (`host/recursion_test.go`); the real-model quality is the
+creds-gated gate (`TestSmoke_TREM2_Section14`).

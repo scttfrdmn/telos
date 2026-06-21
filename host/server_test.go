@@ -3,6 +3,7 @@
 package host
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -19,7 +20,13 @@ func testServer(t *testing.T) *Server {
 	if err != nil {
 		t.Fatalf("load seed: %v", err)
 	}
-	srv, err := NewServer(seed, nil, nil)
+	// Wire deps (offline echo backend + planner) so the planning-root recursion
+	// actually closes — the invocation tests exercise the emitted graph.
+	deps, err := NewDeps(context.Background(), DepsConfig{Envelope: seed.Budget}, nil)
+	if err != nil {
+		t.Fatalf("deps: %v", err)
+	}
+	srv, err := NewServer(seed, deps, nil)
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
@@ -62,32 +69,27 @@ func TestInvocations(t *testing.T) {
 		t.Fatalf("decode invocation: %v", err)
 	}
 
-	// The instantiated graph must be reported — this is M0's deliverable.
+	// The SEED is now the minimal planning-root base case (M3): a single node
+	// that EMITS the real graph at runtime. The seed spec reported is that base
+	// case; the emitted inquiry's shape is reported via Archetype.
 	if resp.Graph.RootID != "root" {
 		t.Fatalf("graph root = %q, want root", resp.Graph.RootID)
 	}
-	if resp.Graph.NodeCount != 10 {
-		t.Fatalf("graph node_count = %d, want 10 (the seed)", resp.Graph.NodeCount)
-	}
-	if resp.Graph.Standard != string(acs.StandardConcordant) {
-		t.Fatalf("graph standard = %q, want concordant (the seeded default)", resp.Graph.Standard)
+	if resp.Graph.NodeCount != 1 {
+		t.Fatalf("seed node_count = %d, want 1 (planning-root base case)", resp.Graph.NodeCount)
 	}
 	// Budget surfaced as a grant rate, never a bare total (invariant 4).
 	if resp.Graph.Budget.PeriodHours <= 0 || resp.Graph.Budget.RatePerDay <= 0 {
 		t.Fatalf("budget must carry a period and a derived rate, got %+v", resp.Graph.Budget)
 	}
-	// All four patterns + acceptance present in the instantiated graph.
-	seen := map[string]bool{}
-	for _, n := range resp.Graph.Nodes {
-		seen[n.Pattern] = true
-		if n.Kind == "acceptance" && n.Trust == "same-envelope" {
-			t.Fatalf("acceptance node %q is same-envelope (invariant 10 violated)", n.ID)
-		}
+	// The recursion closed: the planner inferred an archetype for the question.
+	// "does X cause Y, and what is the evidence" is composite.
+	if resp.Archetype != "composite" {
+		t.Fatalf("expected composite archetype for a conjoined question, got %q", resp.Archetype)
 	}
-	for _, want := range []string{"sequential", "parallel", "supervisor", "react"} {
-		if !seen[want] {
-			t.Fatalf("instantiated graph missing pattern %q", want)
-		}
+	// The separate-envelope acceptance node rendered a verdict (live, M2/M3).
+	if resp.Basis == "" {
+		t.Fatal("expected a labeled acceptance basis in the response")
 	}
 	if resp.Output == "" {
 		t.Fatal("invocation produced no output")

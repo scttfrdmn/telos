@@ -4,6 +4,7 @@ package host
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/scttfrdmn/agenkit-go/agenkit"
 	"github.com/scttfrdmn/agenkit-go/patterns"
@@ -11,8 +12,14 @@ import (
 	"github.com/scttfrdmn/telos/acs"
 	"github.com/scttfrdmn/telos/gateway"
 	"github.com/scttfrdmn/telos/governor"
+	"github.com/scttfrdmn/telos/planner"
 	"github.com/scttfrdmn/telos/router"
 )
+
+// defaultMaxPlanDepth bounds re-planning recursion when Deps.MaxPlanDepth is
+// unset. Planning/re-planning/sub-planning are one operation at different depths
+// (invariant 3); this is the backstop so the recursion cannot run away.
+const defaultMaxPlanDepth = 4
 
 // Deps are the optional runtime services the host wires into leaf agents. When
 // present, a Reason leaf invokes models THROUGH the gateway (invariant 5) instead
@@ -24,10 +31,18 @@ type Deps struct {
 	// Governor conserves the run grant and settles spend; surplus banks through it
 	// iff the acceptance verdict accepts (lexicographic — §9).
 	Governor governor.Governor
+	// Planner turns a question into an ACS the host re-instantiates (closing the
+	// recursion). When set, a Planning node plans live; when nil it is inert.
+	Planner planner.Planner
 	// LiveAcceptance builds acceptance nodes as live summary-judgment renderers
 	// (M2) rather than the inert M0 node. The node still runs in its own envelope
 	// and is built only via the acceptance package (invariant 10).
 	LiveAcceptance bool
+	// MaxPlanDepth bounds re-planning recursion (fails closed beyond it). Zero
+	// uses defaultMaxPlanDepth.
+	MaxPlanDepth int
+	// envelopePeriod is the run grant's period, used to build the burn-rate clock.
+	envelopePeriod time.Duration
 }
 
 // BuildWithDeps instantiates a spec, wiring Deps into leaf agents that can use
@@ -65,8 +80,16 @@ func Build(spec *acs.Spec) (agenkit.Agent, error) {
 type builder struct {
 	spec     *acs.Spec
 	deps     *Deps
+	depth    int                          // current re-planning depth (recursion backstop)
 	building map[acs.NodeID]bool          // cycle guard (defence in depth; Validate also checks)
 	built    map[acs.NodeID]agenkit.Agent // memoize shared subgraphs
+}
+
+func (b *builder) maxDepth() int {
+	if b.deps != nil && b.deps.MaxPlanDepth > 0 {
+		return b.deps.MaxPlanDepth
+	}
+	return defaultMaxPlanDepth
 }
 
 func (b *builder) node(id acs.NodeID) (agenkit.Agent, error) {
@@ -107,11 +130,22 @@ func (b *builder) dispatch(n *acs.Node) (agenkit.Agent, error) {
 
 	switch n.Pattern {
 	case acs.PatternLeaf:
-		// A Reason leaf invokes a model THROUGH the gateway when deps are wired
-		// (invariant 5). Other leaf kinds (Retrieve/Reconcile) and the no-deps M0
-		// path remain deterministic stubs.
-		if n.Kind == acs.KindReason && b.deps != nil && b.deps.Gateway != nil && b.deps.Router != nil {
-			return newGatewayAgent(n, b.deps.Gateway, b.deps.Router), nil
+		// Research-shape producing nodes (evidence-for/against, reconcile,
+		// synthesize, ...) get provenance-aware agents so their records carry the
+		// cited sources the verdict grades (M3 critical path). They wrap a
+		// gateway-backed producer when deps are wired.
+		var gw gateway.Gateway
+		var rtr router.Router
+		if b.deps != nil {
+			gw, rtr = b.deps.Gateway, b.deps.Router
+		}
+		if a, ok := newResearchLeaf(n, gw, rtr); ok {
+			return a, nil
+		}
+		// A plain Reason leaf invokes a model THROUGH the gateway when deps are
+		// wired (invariant 5); otherwise the deterministic M0 stub.
+		if n.Kind == acs.KindReason && gw != nil && rtr != nil {
+			return newGatewayAgent(n, gw, rtr), nil
 		}
 		return newStubAgent(n), nil
 
@@ -136,9 +170,13 @@ func (b *builder) dispatch(n *acs.Node) (agenkit.Agent, error) {
 		return b.react(n)
 
 	case acs.PatternPlanning:
-		// The recursion seam: a Planning node re-emits a sub-ACS (M3). In M0 it
-		// has no children to re-instantiate, so it acts as a leaf worker. If it
-		// were given children, treat it like a sequential spine.
+		// The recursion seam (M3): a Planning node reads the question, asks the
+		// planner to EMIT a sub-ACS, and the host re-instantiates it as a live
+		// subgraph (base case → real graph, invariant 3). With no planner wired
+		// it degrades to a stub (M0 behavior) so composition-only paths still run.
+		if b.deps != nil && b.deps.Planner != nil {
+			return b.planningAgent(n)
+		}
 		if len(n.Children) == 0 {
 			return newStubAgent(n), nil
 		}
@@ -151,6 +189,23 @@ func (b *builder) dispatch(n *acs.Node) (agenkit.Agent, error) {
 	default:
 		return nil, fmt.Errorf("unsupported pattern %q", n.Pattern)
 	}
+}
+
+// planningAgent constructs the recursion-closing agent for a Planning node. It
+// captures the current depth + deps so that, at Process time, it can plan and
+// re-instantiate within the depth bound.
+func (b *builder) planningAgent(n *acs.Node) (agenkit.Agent, error) {
+	if b.depth >= b.maxDepth() {
+		return nil, fmt.Errorf("host: re-planning exceeded max depth %d at node %q (fails closed)", b.maxDepth(), n.ID)
+	}
+	return &planningAgent{
+		node:         n,
+		deps:         b.deps,
+		budget:       b.spec.Budget,
+		seedStandard: b.spec.SeedDefaultStandard(),
+		depth:        b.depth,
+		maxDepth:     b.maxDepth(),
+	}, nil
 }
 
 // children builds each child node in declared order.
@@ -205,15 +260,30 @@ func (b *builder) react(n *acs.Node) (agenkit.Agent, error) {
 }
 
 // concatAggregator combines parallel results deterministically (stable order is
-// guaranteed by ParallelAgent collecting in input order).
+// guaranteed by ParallelAgent collecting in input order). Crucially it PRESERVES
+// each child's provenance record: the default agenkit aggregation builds a fresh
+// message and would drop child metadata, severing the for/against records before
+// the reconciliation node can assemble them. We collect every child record into
+// the output so provenance survives the parallel fan-in (M3 critical path).
 func concatAggregator(id acs.NodeID) patterns.AggregatorFunc {
 	return func(msgs []*agenkit.Message) *agenkit.Message {
 		out := fmt.Sprintf("[%s/parallel] aggregated %d result(s):", id, len(msgs))
+		var records []acceptance.Record
 		for _, m := range msgs {
-			if m != nil {
-				out += "\n  - " + m.ContentString()
+			if m == nil {
+				continue
+			}
+			out += "\n  - " + m.ContentString()
+			if r, ok := readRecord(m); ok {
+				records = append(records, r)
 			}
 		}
-		return agenkit.NewMessage("agent", out)
+		msg := agenkit.NewMessage("agent", out)
+		// Carry the collected child records forward so the next stage (e.g. the
+		// reconciliation node) can assemble the for/against record.
+		if len(records) > 0 {
+			msg.WithMetadata(recordsKey, records)
+		}
+		return msg
 	}
 }

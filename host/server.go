@@ -86,10 +86,20 @@ type InvocationRequest struct {
 type InvocationResponse struct {
 	// Output is the root agent's final message content.
 	Output string `json:"output"`
-	// Graph describes the instantiated seed graph (so a caller can see WHICH
-	// composition ran — the point of M0).
+	// Graph describes the instantiated SEED spec (the base case). With the M3
+	// recursion the seed is a single planning node; the emitted graph it produced
+	// is reported via Archetype + the agent metadata.
 	Graph GraphSummary `json:"graph"`
-	// Metadata carries the root message's metadata.
+	// Archetype is the inquiry shape the planner inferred for this question (the
+	// emitted graph's shape) — "composite", "mechanistic", or "evidence-synthesis".
+	Archetype string `json:"archetype,omitempty"`
+	// Accepted / Basis report the separate-envelope acceptance verdict over the
+	// run record (M2/M3). For a provenanced contested result, Accepted is true and
+	// Basis is "contested".
+	Accepted bool   `json:"accepted"`
+	Basis    string `json:"basis,omitempty"`
+	// Metadata carries the root message's metadata (scoping, for/against record,
+	// metering — the auditable §14 surface).
 	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
@@ -129,9 +139,12 @@ func (s *Server) handleInvocations(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := InvocationResponse{
-		Output:   out.ContentString(),
-		Graph:    summarize(s.seed),
-		Metadata: out.Metadata,
+		Output:    out.ContentString(),
+		Graph:     summarize(s.seed),
+		Archetype: metaString(out, "telos.archetype"),
+		Accepted:  metaBool(out, "telos.accepted"),
+		Basis:     metaString(out, "telos.basis"),
+		Metadata:  out.Metadata,
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -184,3 +197,21 @@ func timestamp(ctx context.Context) string {
 }
 
 type clockKey struct{}
+
+// metaString reads a string metadata value from a message, or "" if absent.
+func metaString(m *agenkit.Message, key string) string {
+	if m == nil || m.Metadata == nil {
+		return ""
+	}
+	s, _ := m.Metadata[key].(string)
+	return s
+}
+
+// metaBool reads a bool metadata value from a message, or false if absent.
+func metaBool(m *agenkit.Message, key string) bool {
+	if m == nil || m.Metadata == nil {
+		return false
+	}
+	b, _ := m.Metadata[key].(bool)
+	return b
+}
