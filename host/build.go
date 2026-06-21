@@ -9,7 +9,28 @@ import (
 	"github.com/scttfrdmn/agenkit-go/patterns"
 	"github.com/scttfrdmn/telos/acceptance"
 	"github.com/scttfrdmn/telos/acs"
+	"github.com/scttfrdmn/telos/gateway"
+	"github.com/scttfrdmn/telos/router"
 )
+
+// Deps are the optional runtime services the host wires into leaf agents. When
+// present, a Reason leaf invokes models THROUGH the gateway (invariant 5) instead
+// of returning a deterministic stub. When nil (the M0 path), leaves are stubs and
+// the graph is composition-only. Both keep acceptance separable (invariant 10).
+type Deps struct {
+	Gateway gateway.Gateway
+	Router  router.Router
+}
+
+// BuildWithDeps instantiates a spec, wiring Deps into leaf agents that can use
+// them. Build(spec) is BuildWithDeps(spec, nil).
+func BuildWithDeps(spec *acs.Spec, deps *Deps) (agenkit.Agent, error) {
+	if spec == nil {
+		return nil, fmt.Errorf("host: nil spec")
+	}
+	b := &builder{spec: spec, deps: deps, building: map[acs.NodeID]bool{}, built: map[acs.NodeID]agenkit.Agent{}}
+	return b.node(spec.RootID)
+}
 
 // Build instantiates an acs.Spec into a runnable agenkit agent graph rooted at
 // the spec's RootID. This is "composition, not codegen" (invariant 2): the spec
@@ -30,15 +51,12 @@ import (
 // package-level half of the separation: production code in this package cannot
 // construct an acceptance node from a stub, and acceptance code produces nothing.
 func Build(spec *acs.Spec) (agenkit.Agent, error) {
-	if spec == nil {
-		return nil, fmt.Errorf("host: nil spec")
-	}
-	b := &builder{spec: spec, building: map[acs.NodeID]bool{}, built: map[acs.NodeID]agenkit.Agent{}}
-	return b.node(spec.RootID)
+	return BuildWithDeps(spec, nil)
 }
 
 type builder struct {
 	spec     *acs.Spec
+	deps     *Deps
 	building map[acs.NodeID]bool          // cycle guard (defence in depth; Validate also checks)
 	built    map[acs.NodeID]agenkit.Agent // memoize shared subgraphs
 }
@@ -75,6 +93,12 @@ func (b *builder) dispatch(n *acs.Node) (agenkit.Agent, error) {
 
 	switch n.Pattern {
 	case acs.PatternLeaf:
+		// A Reason leaf invokes a model THROUGH the gateway when deps are wired
+		// (invariant 5). Other leaf kinds (Retrieve/Reconcile) and the no-deps M0
+		// path remain deterministic stubs.
+		if n.Kind == acs.KindReason && b.deps != nil && b.deps.Gateway != nil && b.deps.Router != nil {
+			return newGatewayAgent(n, b.deps.Gateway, b.deps.Router), nil
+		}
 		return newStubAgent(n), nil
 
 	case acs.PatternSequential:

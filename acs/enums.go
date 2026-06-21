@@ -156,7 +156,12 @@ const (
 	TierFrontier Tier = "frontier" // escalate only under pressure
 )
 
-func (t Tier) valid() bool {
+func (t Tier) valid() bool { return t.Valid() }
+
+// Valid reports whether t is a known tier (or empty, meaning "cascade floor").
+// Exported so consumers like the router can validate a routing table without
+// re-listing the tier set.
+func (t Tier) Valid() bool {
 	switch t {
 	case TierCheap, TierMid, TierFrontier, "":
 		return true

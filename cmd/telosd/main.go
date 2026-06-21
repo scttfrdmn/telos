@@ -33,14 +33,23 @@ func main() {
 	}
 	log.Info("seed loaded", "hash", seed.Hash, "root", seed.RootID, "nodes", len(seed.Nodes))
 
-	srv, err := host.NewServer(seed, log)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	// Assemble the gateway/router/governor deps from the environment. With no
+	// AWS creds and no local model server configured, NewDeps falls back to an
+	// offline echo backend so the host runs end to end (synthesized cost).
+	deps, err := host.NewDeps(ctx, depsConfigFromEnv(seed), log)
+	if err != nil {
+		log.Error("assemble deps", "err", err)
+		os.Exit(1)
+	}
+
+	srv, err := host.NewServer(seed, deps, log)
 	if err != nil {
 		log.Error("new server", "err", err)
 		os.Exit(1)
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 
 	if err := srv.ListenAndServe(ctx, *addr); err != nil {
 		log.Error("serve", "err", err)
@@ -55,6 +64,24 @@ func loadSeed(path string) (*acs.Spec, error) {
 		return acs.LoadFile(path)
 	}
 	return acs.Load(embeddedBootstrap)
+}
+
+// depsConfigFromEnv builds the gateway backend config from the environment. The
+// run envelope is taken from the seed's grant. Backends are opt-in:
+//
+//	TELOS_BEDROCK_MODEL  (+ optional AWS_REGION)  → wire Bedrock
+//	TELOS_OLLAMA_MODEL   (+ optional OLLAMA_HOST) → wire local Ollama
+//
+// With neither set, NewDeps falls back to the offline echo backend.
+func depsConfigFromEnv(seed *acs.Spec) host.DepsConfig {
+	cfg := host.DepsConfig{Envelope: seed.Budget}
+	if m := os.Getenv("TELOS_BEDROCK_MODEL"); m != "" {
+		cfg.Bedrock = &host.BedrockConfig{ModelID: m, Region: os.Getenv("AWS_REGION")}
+	}
+	if m := os.Getenv("TELOS_OLLAMA_MODEL"); m != "" {
+		cfg.Ollama = &host.OllamaConfig{Model: m, BaseURL: os.Getenv("OLLAMA_HOST")}
+	}
+	return cfg
 }
 
 func envOr(key, def string) string {

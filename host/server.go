@@ -27,11 +27,14 @@ import (
 // Server answers the AgentCore contract for a single seed Spec.
 type Server struct {
 	seed *acs.Spec
+	deps *Deps // optional; when set, Reason leaves invoke through the gateway
 	log  *slog.Logger
 }
 
-// NewServer constructs a host serving the given seed Spec.
-func NewServer(seed *acs.Spec, log *slog.Logger) (*Server, error) {
+// NewServer constructs a host serving the given seed Spec. deps is optional:
+// nil gives the M0 composition-only behavior (stub leaves); a non-nil deps wires
+// Reason leaves to invoke models through the gateway (invariant 5).
+func NewServer(seed *acs.Spec, deps *Deps, log *slog.Logger) (*Server, error) {
 	if seed == nil {
 		return nil, fmt.Errorf("host: nil seed spec")
 	}
@@ -40,10 +43,10 @@ func NewServer(seed *acs.Spec, log *slog.Logger) (*Server, error) {
 	}
 	// Fail fast if the seed cannot be instantiated — a host that can't build its
 	// own base case should not report healthy.
-	if _, err := Build(seed); err != nil {
+	if _, err := BuildWithDeps(seed, deps); err != nil {
 		return nil, fmt.Errorf("host: seed is not instantiable: %w", err)
 	}
-	return &Server{seed: seed, log: log}, nil
+	return &Server{seed: seed, deps: deps, log: log}, nil
 }
 
 // Handler returns the HTTP mux implementing the contract.
@@ -104,7 +107,7 @@ func (s *Server) handleInvocations(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	root, err := Build(s.seed)
+	root, err := BuildWithDeps(s.seed, s.deps)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Errorf("instantiate seed: %w", err))
 		return

@@ -19,7 +19,7 @@ func testServer(t *testing.T) *Server {
 	if err != nil {
 		t.Fatalf("load seed: %v", err)
 	}
-	srv, err := NewServer(seed, nil)
+	srv, err := NewServer(seed, nil, nil)
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
