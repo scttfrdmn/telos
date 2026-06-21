@@ -65,10 +65,12 @@ func (a *gatewayAgent) Process(ctx context.Context, message *agenkit.Message) (*
 	if out == nil {
 		out = agenkit.NewMessage("agent", "")
 	}
-	// Surface metering provenance in metadata (not as behavior): which node,
-	// what it cost, and — for honest accounting — whether cost was synthesized.
+	// Surface metering provenance in metadata (not as behavior): which node, total
+	// cost, and — for honest accounting — the metered vs MODELED split kept
+	// separable so a measured and a synthesized quantity never blend downstream.
 	out.WithMetadata("telos.node", string(a.node.ID))
 	out.WithMetadata("telos.cost", cost.Amount)
+	out.WithMetadata("telos.cost_metered", cost.Metered())
 	out.WithMetadata("telos.cost_synthesized", cost.Synthesized)
 	out.WithMetadata("telos.backend", resp.Backend)
 	return out, nil

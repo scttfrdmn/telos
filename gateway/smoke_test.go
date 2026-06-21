@@ -57,7 +57,7 @@ func TestSmoke_Bedrock(t *testing.T) {
 	if resp.Message.ContentString() == "" {
 		t.Fatal("empty reply")
 	}
-	if cost.Synthesized {
+	if cost.HasSynthesized() {
 		t.Fatal("Bedrock cost must not be synthesized")
 	}
 	if cost.Amount <= 0 {
@@ -86,7 +86,7 @@ func TestSmoke_Ollama(t *testing.T) {
 	}
 	// The whole point: a local model bills nothing, so the gateway synthesized
 	// its cost — and it is non-zero.
-	if !cost.Synthesized {
+	if !cost.FullySynthesized() {
 		t.Fatal("Ollama cost MUST be synthesized at the gateway")
 	}
 	if cost.Amount <= 0 {

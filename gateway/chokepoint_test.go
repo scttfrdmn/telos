@@ -20,7 +20,7 @@ func newTestGateway(t *testing.T, env float64, backends map[string]Backend) (*Ch
 		Rates: map[string]Rates{
 			"cloud-model": {Input: 3.0, Output: 15.0}, // realistic-ish $/M
 		},
-		SynthLocal: Rates{Input: 0.05, Output: 0.05},
+		Synthesis: FlatRateSynthesis{Rate: Rates{Input: 0.05, Output: 0.05}},
 	})
 	gw, err := New(Config{Backends: backends, Governor: gov, Costs: costs, ReservePeriod: time.Minute})
 	if err != nil {
@@ -81,11 +81,17 @@ func TestInvoke_LocalCostSynthesizedAtGateway(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if costCloud.Synthesized {
-		t.Fatal("cloud cost must NOT be synthesized (a provider bills it)")
+	if costCloud.HasSynthesized() {
+		t.Fatalf("cloud cost must NOT be synthesized (a provider bills it); synthesized=%v", costCloud.Synthesized)
 	}
-	if !costLocal.Synthesized {
-		t.Fatal("local cost MUST be synthesized (no provider bills it) — the reason metering lives at the gateway")
+	if costCloud.Metered() != costCloud.Amount {
+		t.Fatal("cloud cost should be fully metered (Metered == Amount)")
+	}
+	if !costLocal.FullySynthesized() {
+		t.Fatalf("local cost MUST be fully synthesized (no provider bills it); amount=%v synthesized=%v", costLocal.Amount, costLocal.Synthesized)
+	}
+	if costLocal.Metered() != 0 {
+		t.Fatal("local cost must have zero metered portion (nothing was billed)")
 	}
 	// Local synthesized cost is non-zero: local work is not free.
 	if costLocal.Amount <= 0 {

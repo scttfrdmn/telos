@@ -52,11 +52,20 @@ func TestGatewayAgent_MeteringMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("process: %v", err)
 	}
-	if _, ok := out.Metadata["telos.cost"]; !ok {
+	total, ok := out.Metadata["telos.cost"].(float64)
+	if !ok {
 		t.Fatal("gateway-backed leaf must record telos.cost (metered at the gateway)")
 	}
-	if synth, _ := out.Metadata["telos.cost_synthesized"].(bool); !synth {
-		t.Fatal("offline/local backend cost must be synthesized")
+	synth, _ := out.Metadata["telos.cost_synthesized"].(float64)
+	if synth <= 0 {
+		t.Fatal("offline/local backend cost must be synthesized (modeled, > 0)")
+	}
+	// The whole cost is modeled for the echo/local backend — nothing was billed.
+	if synth != total {
+		t.Fatalf("offline backend cost should be fully synthesized: synth=%v total=%v", synth, total)
+	}
+	if metered, _ := out.Metadata["telos.cost_metered"].(float64); metered != 0 {
+		t.Fatalf("offline backend should have zero metered cost, got %v", metered)
 	}
 	if be, _ := out.Metadata["telos.backend"].(string); be == "" {
 		t.Fatal("response should record which backend served it")
