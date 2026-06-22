@@ -1,0 +1,17 @@
+{
+  "entity": "telos-eval-orphan-1782091087",
+  "provider_id": "i-0a21e989541abd9d6",
+  "instance_type": "t4g.small",
+  "ttl_minutes": 15,
+  "cost_limit_usd": 0.5,
+  "launched_at": "2026-06-22T01:18:10Z",
+  "stranded": true,
+  "orphans_detected": 1,
+  "our_instance_detected": true,
+  "terminated": [
+    "telos-eval-orphan-1782091087"
+  ],
+  "residual_running": 0,
+  "residual_clean": true,
+  "checked_at": "2026-06-22T01:18:34Z"
+}
