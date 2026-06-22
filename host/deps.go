@@ -37,8 +37,14 @@ type DepsConfig struct {
 	// Envelope is the run's grant the governor conserves against (amount + period).
 	Envelope acs.Budget
 
-	// Bedrock, when non-nil, wires a real Bedrock backend.
+	// Bedrock, when non-nil, wires a real Bedrock backend (mid/frontier tiers).
 	Bedrock *BedrockConfig
+	// CheapModel, when set alongside Bedrock, is a distinct CHEAP-tier Bedrock
+	// model id (e.g. Haiku) so the cascade has a real cheap floor below the
+	// mid/frontier escalation model. Empty = the cheap tier reuses Bedrock.ModelID
+	// (no cheap/escalation distinction). This exists so the cheap-vs-escalation
+	// path is observable; it does not change routing policy.
+	CheapModel string
 	// Ollama, when non-nil, wires a real local Ollama backend.
 	Ollama *OllamaConfig
 }
@@ -88,6 +94,20 @@ func NewDeps(ctx context.Context, cfg DepsConfig, log *slog.Logger) (*Deps, erro
 			router.Entry{Tier: acs.TierMid, Provider: "bedrock", Model: cfg.Bedrock.ModelID},
 			router.Entry{Tier: acs.TierFrontier, Provider: "bedrock", Model: cfg.Bedrock.ModelID},
 		)
+		// A distinct cheap-tier Bedrock model (e.g. Haiku) gives the cascade a real
+		// cheap floor, so cheap-vs-escalation is observable. The cheap backend is a
+		// SECOND bedrock-backed entry under a separate provider key.
+		if cfg.CheapModel != "" {
+			cheapBE, err := gateway.NewBedrockBackend(ctx, cfg.CheapModel, cfg.Bedrock.Region)
+			if err != nil {
+				return nil, err
+			}
+			backends["bedrock-cheap"] = cheapBE
+			entries = append([]router.Entry{
+				{Tier: acs.TierCheap, Provider: "bedrock-cheap", Model: cfg.CheapModel},
+			}, entries...)
+			log.Info("wired cheap-tier bedrock backend", "model", cfg.CheapModel)
+		}
 		log.Info("wired bedrock backend", "model", cfg.Bedrock.ModelID, "region", cfg.Bedrock.Region)
 	}
 
@@ -145,7 +165,12 @@ func NewDeps(ctx context.Context, cfg DepsConfig, log *slog.Logger) (*Deps, erro
 // Unknown models fall back to the gateway cost model's built-in floor.
 func defaultBedrockRates() map[string]gateway.Rates {
 	return map[string]gateway.Rates{
+		// $/M tokens (nominal published Bedrock rates). Unknown models fall back to
+		// the cost model's built-in floor, so cost is always metered, never free.
 		"anthropic.claude-3-5-haiku-20241022-v1:0":  {Input: 0.80, Output: 4.00},
 		"anthropic.claude-3-5-sonnet-20241022-v2:0": {Input: 3.00, Output: 15.00},
+		"anthropic.claude-haiku-4-5-20251001-v1:0":  {Input: 1.00, Output: 5.00},
+		"anthropic.claude-sonnet-4-20250514-v1:0":   {Input: 3.00, Output: 15.00},
+		"anthropic.claude-sonnet-4-5-20250929-v1:0": {Input: 3.00, Output: 15.00},
 	}
 }

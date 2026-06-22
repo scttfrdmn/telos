@@ -1,0 +1,72 @@
+[
+  {
+    "id": "mat-boron-creep",
+    "prompt": "Does grain-boundary segregation of boron improve the creep resistance of nickel superalloys, and what does the literature show?",
+    "why": "COMPOSITE, non-TREM2 (materials science): a mechanistic act ('improve creep resistance') conjoined with an explicit evidence ask. Tests whether composite detection generalizes off the tuned biomedical subject.",
+    "domain": "materials",
+    "expect_archetype": "composite"
+  },
+  {
+    "id": "cbam-leakage",
+    "prompt": "What is the current evidence on whether carbon border adjustment mechanisms reduce carbon leakage?",
+    "why": "EVIDENCE-SYNTHESIS, climate-economics: pure 'what does the evidence show', subject nouns the offline detector has never seen.",
+    "domain": "climate-econ",
+    "expect_archetype": "evidence-synthesis"
+  },
+  {
+    "id": "gradual-typing-perf",
+    "prompt": "Does gradual typing degrade runtime performance in production JavaScript?",
+    "why": "MECHANISTIC/causal, programming-languages: a 'does X degrade Y' with no distinct evidence ask. Non-biomed; tests mechanistic detection generalizes.",
+    "domain": "cs",
+    "expect_archetype": "mechanistic"
+  },
+  {
+    "id": "german-minwage-employment",
+    "prompt": "Did the 2015 German minimum-wage increase reduce employment?",
+    "why": "MECHANISTIC, economics — the empirical answer is genuinely CONTESTED. Tests the system returns contested/stage-dependent rather than manufacturing a yes/no.",
+    "domain": "economics",
+    "expect_archetype": "mechanistic"
+  },
+  {
+    "id": "satfat-cvd",
+    "prompt": "Is dietary saturated fat a cause of cardiovascular disease?",
+    "why": "MECHANISTIC, nutrition — famously CONTESTED with strong evidence both directions. The direction-neutrality / publication-bias probe: a well-supported 'contested' must be accepted, not forced positive.",
+    "domain": "nutrition",
+    "expect_archetype": "mechanistic"
+  },
+  {
+    "id": "tokamak-stellarator",
+    "prompt": "Compare tokamak versus stellarator magnetic confinement for a commercial fusion reactor.",
+    "why": "COMPARATIVE, plasma physics: a per-arm comparison. Tests the comparative archetype (the offline pack may not have a comparative shape — a finding either way).",
+    "domain": "physics",
+    "expect_archetype": "comparative"
+  },
+  {
+    "id": "transformer-scaling-law",
+    "prompt": "Reproduce the scaling-law exponent relating transformer training loss to compute budget.",
+    "why": "QUANTITATIVE/REPRODUCTION, ML: a numerical reproduction. The Phase-2 real-compute candidate; tests the quantitative archetype + the ComputeSynthesis seam.",
+    "domain": "ml",
+    "expect_archetype": "quantitative"
+  },
+  {
+    "id": "technosignatures",
+    "prompt": "What are the most promising avenues for detecting technosignatures from extraterrestrial civilizations?",
+    "why": "EXPLORATORY/OPEN, astrobiology: an unbounded 'what are the avenues'. Tests whether the scoping-node-first narrowing actually fires before any worker spends.",
+    "domain": "astro",
+    "expect_archetype": "exploratory"
+  },
+  {
+    "id": "rome-economic-collapse",
+    "prompt": "Was the fall of the Western Roman Empire primarily caused by economic factors?",
+    "why": "MECHANISTIC, history — far from any tuned domain; honest answer is contested/multi-causal. Tests contested-preservation in a humanities domain with no quantitative oracle.",
+    "domain": "history",
+    "expect_archetype": "mechanistic"
+  },
+  {
+    "id": "ceria-alumina-stability",
+    "prompt": "Does adding cerium improve the thermal stability of alumina catalyst supports, and what is the mechanistic and experimental evidence?",
+    "why": "COMPOSITE, catalysis chemistry: second non-TREM2 composite (mechanistic + evidence). Confirms composite detection isn't a one-off on the materials question.",
+    "domain": "chemistry",
+    "expect_archetype": "composite"
+  }
+]
